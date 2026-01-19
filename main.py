@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
@@ -180,3 +183,85 @@ def api_analysis():
     Endpoint para análisis rápido del Excel.
     """
     return analisis_basico()
+
+from fastapi import Request
+from ai_engine import ask_ai
+from intent_engine import detect_intent
+
+@app.post("/api/ia-query")
+async def ia_query(request: Request):
+    body = await request.json()
+    pregunta = body.get("pregunta", "")
+
+    df, col_map = load_sheet()
+    intent = detect_intent(pregunta)
+
+    # 1) Stock por código
+    if intent["intent"] == "stock_por_codigo":
+        codigo = intent["codigo"]
+        talle = intent["talle"]
+
+        q = df.copy()
+        col_art = col_map.get("articulo")
+        col_talle = col_map.get("talle")
+
+        if col_art:
+            q = q[q[col_art].astype(str).str.contains(codigo)]
+
+        if talle and col_talle:
+            q = q[q[col_talle].astype(str) == str(talle)]
+
+        prompt = f"""
+        Datos del Excel:
+        {q.to_json(orient='records')}
+
+        Pregunta del usuario:
+        {pregunta}
+
+        Generá una respuesta clara, profesional y completa.
+        """
+
+        return {"respuesta": ask_ai(prompt)}
+
+    # 2) Precio por código
+    if intent["intent"] == "precio_por_codigo":
+        codigo = intent["codigo"]
+        q = df[df[col_map["articulo"]].astype(str).str.contains(codigo)]
+
+        prompt = f"""
+        Datos del Excel:
+        {q.to_json(orient='records')}
+
+        Pregunta del usuario:
+        {pregunta}
+        """
+
+        return {"respuesta": ask_ai(prompt)}
+
+    # 3) Análisis global
+    if intent["intent"] == "analisis_global":
+        stats = analisis_basico()
+
+        prompt = f"""
+        Estadísticas globales del Excel:
+        {stats}
+
+        Pregunta del usuario:
+        {pregunta}
+        """
+
+        return {"respuesta": ask_ai(prompt)}
+
+    # 4) Consultas complejas
+    prompt = f"""
+    Datos completos del Excel:
+    {df.to_json(orient='records')}
+
+    Pregunta del usuario:
+    {pregunta}
+
+    Respondé como un analista experto.
+    """
+
+    return {"respuesta": ask_ai(prompt)}
+
