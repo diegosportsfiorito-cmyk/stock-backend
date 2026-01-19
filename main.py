@@ -8,6 +8,8 @@ import pandas as pd
 import requests
 import io
 import time
+import traceback
+
 from ai_engine import ask_ai
 from intent_engine import detect_intent
 
@@ -180,7 +182,7 @@ def interpretar_consulta(texto: str):
 
 
 # ---------------------------------------------------------
-# 6) Endpoint IA optimizado
+# 6) Endpoint IA optimizado + LOG DE ERRORES
 # ---------------------------------------------------------
 @app.post("/api/ia-query")
 async def ia_query(request: Request):
@@ -312,6 +314,9 @@ async def ia_query(request: Request):
         return {"respuesta": ask_ai(prompt)}
 
     except Exception as e:
+        print("🔥 ERROR EN IA_QUERY:")
+        traceback.print_exc()
+
         return JSONResponse(
             status_code=500,
             content={"error": str(e)},
