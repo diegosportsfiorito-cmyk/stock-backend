@@ -3,6 +3,7 @@ load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import pandas as pd
 import requests
 import io
@@ -11,13 +12,13 @@ from ai_engine import ask_ai
 from intent_engine import detect_intent
 
 # ---------------------------------------------------------
-# 1) Crear app y configurar CORS (DEBE IR ARRIBA DE TODO)
+# 1) Crear app y configurar CORS
 # ---------------------------------------------------------
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # Permitir cualquier origen (GitHub Pages)
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,24 +34,31 @@ SHEET_EXPORT_URL = (
 
 df_cache = None
 last_load_time = 0
-CACHE_TTL_SECONDS = 60  # recarga cada 60 segundos como máximo
+CACHE_TTL_SECONDS = 60  # recarga cada 60 segundos
 
 
+# ---------------------------------------------------------
+# 3) Cargar Excel con control de calidad
+# ---------------------------------------------------------
 def load_sheet():
     global df_cache, last_load_time
     now = time.time()
 
+    # Cache
     if df_cache is not None and (now - last_load_time) < CACHE_TTL_SECONDS:
         return df_cache
 
+    # Descargar archivo
     resp = requests.get(SHEET_EXPORT_URL)
     resp.raise_for_status()
     data = io.BytesIO(resp.content)
 
     df = pd.read_excel(data)
 
+    # Normalizar columnas
     df.columns = [str(c).strip().lower() for c in df.columns]
 
+    # Mapear columnas
     col_map = {}
     for c in df.columns:
         if "art" in c and "ículo" in c:
@@ -66,13 +74,22 @@ def load_sheet():
         elif "precio" in c:
             col_map["precio"] = c
 
+    # Sanitizar datos para Groq
+    df = df.fillna("")  # evitar NaN
+    df = df.replace({float("inf"): 0, float("-inf"): 0})
+
+    # Control de filas
+    total_filas = len(df)
+    if total_filas < 10000:  # tu archivo real tiene 14115
+        raise ValueError(f"Excel incompleto: solo {total_filas} filas cargadas")
+
     df_cache = (df, col_map)
     last_load_time = now
     return df_cache
 
 
 # ---------------------------------------------------------
-# 3) Funciones de consulta
+# 4) Funciones de consulta
 # ---------------------------------------------------------
 def buscar_por_articulo_talle(articulo=None, talle=None):
     df, col_map = load_sheet()
@@ -128,6 +145,9 @@ def analisis_basico():
     return res
 
 
+# ---------------------------------------------------------
+# 5) Interpretación de consulta
+# ---------------------------------------------------------
 def interpretar_consulta(texto: str):
     texto_l = texto.lower()
 
@@ -166,7 +186,7 @@ def interpretar_consulta(texto: str):
 
 
 # ---------------------------------------------------------
-# 4) Endpoints API
+# 6) Endpoints API
 # ---------------------------------------------------------
 @app.get("/api/query")
 def api_query(q: str):
@@ -181,73 +201,99 @@ def api_analysis():
 
 @app.post("/api/ia-query")
 async def ia_query(request: Request):
-    body = await request.json()
-    pregunta = body.get("pregunta", "")
+    try:
+        body = await request.json()
+        pregunta = body.get("pregunta", "")
 
-    df, col_map = load_sheet()
-    intent = detect_intent(pregunta)
+        df, col_map = load_sheet()
+        intent = detect_intent(pregunta)
 
-    if intent["intent"] == "stock_por_codigo":
-        codigo = intent["codigo"]
-        talle = intent["talle"]
+        # -------------------------
+        # STOCK POR CÓDIGO
+        # -------------------------
+        if intent["intent"] == "stock_por_codigo":
+            codigo = intent["codigo"]
+            talle = intent["talle"]
 
-        q = df.copy()
-        col_art = col_map.get("articulo")
-        col_talle = col_map.get("talle")
+            q = df.copy()
+            col_art = col_map.get("articulo")
+            col_talle = col_map.get("talle")
 
-        if col_art:
-            q = q[q[col_art].astype(str).str.contains(codigo)]
+            if col_art:
+                q = q[q[col_art].astype(str).str.contains(codigo)]
 
-        if talle and col_talle:
-            q = q[q[col_talle].astype(str) == str(talle)]
+            if talle and col_talle:
+                q = q[q[col_talle].astype(str) == str(talle)]
+
+            # Limitar filas para Groq
+            q_small = q.head(20)
+
+            prompt = f"""
+            Datos filtrados del Excel (máx 20 filas):
+            {q_small.to_json(orient='records')}
+
+            Pregunta del usuario:
+            {pregunta}
+
+            Generá una respuesta clara, profesional y completa.
+            """
+
+            return {"respuesta": ask_ai(prompt)}
+
+        # -------------------------
+        # PRECIO POR CÓDIGO
+        # -------------------------
+        if intent["intent"] == "precio_por_codigo":
+            codigo = intent["codigo"]
+            q = df[df[col_map["articulo"]].astype(str).str.contains(codigo)]
+            q_small = q.head(20)
+
+            prompt = f"""
+            Datos filtrados del Excel (máx 20 filas):
+            {q_small.to_json(orient='records')}
+
+            Pregunta del usuario:
+            {pregunta}
+            """
+
+            return {"respuesta": ask_ai(prompt)}
+
+        # -------------------------
+        # ANÁLISIS GLOBAL
+        # -------------------------
+        if intent["intent"] == "analisis_global":
+            stats = analisis_basico()
+
+            prompt = f"""
+            Estadísticas globales del Excel:
+            {stats}
+
+            Pregunta del usuario:
+            {pregunta}
+            """
+
+            return {"respuesta": ask_ai(prompt)}
+
+        # -------------------------
+        # CONSULTA GENERAL
+        # -------------------------
+        df_sample = df.head(20)
 
         prompt = f"""
-        Datos del Excel:
-        {q.to_json(orient='records')}
+        Muestra del Excel (primeras 20 filas):
+        {df_sample.to_json(orient='records')}
 
         Pregunta del usuario:
         {pregunta}
 
-        Generá una respuesta clara, profesional y completa.
+        Respondé como un analista experto.
         """
 
         return {"respuesta": ask_ai(prompt)}
 
-    if intent["intent"] == "precio_por_codigo":
-        codigo = intent["codigo"]
-        q = df[df[col_map["articulo"]].astype(str).str.contains(codigo)]
-
-        prompt = f"""
-        Datos del Excel:
-        {q.to_json(orient='records')}
-
-        Pregunta del usuario:
-        {pregunta}
-        """
-
-        return {"respuesta": ask_ai(prompt)}
-
-    if intent["intent"] == "analisis_global":
-        stats = analisis_basico()
-
-        prompt = f"""
-        Estadísticas globales del Excel:
-        {stats}
-
-        Pregunta del usuario:
-        {pregunta}
-        """
-
-        return {"respuesta": ask_ai(prompt)}
-
-    prompt = f"""
-    Datos completos del Excel:
-    {df.to_json(orient='records')}
-
-    Pregunta del usuario:
-    {pregunta}
-
-    Respondé como un analista experto.
-    """
-
-    return {"respuesta": ask_ai(prompt)}
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)},
+            headers={"Access-Control-Allow-Origin": "*"},
+        )
