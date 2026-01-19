@@ -18,7 +18,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +34,7 @@ SHEET_EXPORT_URL = (
 
 df_cache = None
 last_load_time = 0
-CACHE_TTL_SECONDS = 60  # recarga cada 60 segundos
+CACHE_TTL_SECONDS = 60
 
 
 # ---------------------------------------------------------
@@ -44,21 +44,17 @@ def load_sheet():
     global df_cache, last_load_time
     now = time.time()
 
-    # Cache
     if df_cache is not None and (now - last_load_time) < CACHE_TTL_SECONDS:
         return df_cache
 
-    # Descargar archivo
     resp = requests.get(SHEET_EXPORT_URL)
     resp.raise_for_status()
     data = io.BytesIO(resp.content)
 
     df = pd.read_excel(data)
 
-    # Normalizar columnas
     df.columns = [str(c).strip().lower() for c in df.columns]
 
-    # Mapear columnas
     col_map = {}
     for c in df.columns:
         if "art" in c and "ículo" in c:
@@ -74,13 +70,11 @@ def load_sheet():
         elif "precio" in c:
             col_map["precio"] = c
 
-    # Sanitizar datos para Groq
-    df = df.fillna("")  # evitar NaN
+    df = df.fillna("")
     df = df.replace({float("inf"): 0, float("-inf"): 0})
 
-    # Control de filas
     total_filas = len(df)
-    if total_filas < 10000:  # tu archivo real tiene 14115
+    if total_filas < 10000:
         raise ValueError(f"Excel incompleto: solo {total_filas} filas cargadas")
 
     df_cache = (df, col_map)
@@ -186,19 +180,8 @@ def interpretar_consulta(texto: str):
 
 
 # ---------------------------------------------------------
-# 6) Endpoints API
+# 6) Endpoint IA optimizado
 # ---------------------------------------------------------
-@app.get("/api/query")
-def api_query(q: str):
-    respuesta = interpretar_consulta(q)
-    return {"respuesta": respuesta}
-
-
-@app.get("/api/analysis")
-def api_analysis():
-    return analisis_basico()
-
-
 @app.post("/api/ia-query")
 async def ia_query(request: Request):
     try:
@@ -220,13 +203,28 @@ async def ia_query(request: Request):
             col_talle = col_map.get("talle")
 
             if col_art:
-                q = q[q[col_art].astype(str).str.contains(codigo)]
+                q = q[q[col_art].astype(str).str.contains(codigo, case=False, na=False)]
 
             if talle and col_talle:
                 q = q[q[col_talle].astype(str) == str(talle)]
 
-            # Limitar filas para Groq
+            if q.empty:
+                return {"respuesta": "No se encontró stock para ese artículo o talle."}
+
             q_small = q.head(20)
+
+            cols = [
+                col_map.get("articulo"),
+                col_map.get("descripcion"),
+                col_map.get("talle"),
+                col_map.get("cantidad"),
+                col_map.get("precio")
+            ]
+            cols = [c for c in cols if c]
+            q_small = q_small[cols]
+
+            q_small = q_small.fillna("")
+            q_small = q_small.replace({float("inf"): 0, float("-inf"): 0})
 
             prompt = f"""
             Datos filtrados del Excel (máx 20 filas):
@@ -235,7 +233,7 @@ async def ia_query(request: Request):
             Pregunta del usuario:
             {pregunta}
 
-            Generá una respuesta clara, profesional y completa.
+            Respondé como un analista experto en stock.
             """
 
             return {"respuesta": ask_ai(prompt)}
@@ -247,6 +245,16 @@ async def ia_query(request: Request):
             codigo = intent["codigo"]
             q = df[df[col_map["articulo"]].astype(str).str.contains(codigo)]
             q_small = q.head(20)
+
+            cols = [
+                col_map.get("articulo"),
+                col_map.get("descripcion"),
+                col_map.get("precio")
+            ]
+            cols = [c for c in cols if c]
+            q_small = q_small[cols]
+
+            q_small = q_small.fillna("")
 
             prompt = f"""
             Datos filtrados del Excel (máx 20 filas):
@@ -278,6 +286,18 @@ async def ia_query(request: Request):
         # CONSULTA GENERAL
         # -------------------------
         df_sample = df.head(20)
+
+        cols = [
+            col_map.get("articulo"),
+            col_map.get("descripcion"),
+            col_map.get("talle"),
+            col_map.get("cantidad"),
+            col_map.get("precio")
+        ]
+        cols = [c for c in cols if c]
+        df_sample = df_sample[cols]
+
+        df_sample = df_sample.fillna("")
 
         prompt = f"""
         Muestra del Excel (primeras 20 filas):
