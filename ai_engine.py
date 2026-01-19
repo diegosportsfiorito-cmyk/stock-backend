@@ -1,8 +1,8 @@
 import os
-from openai import OpenAI
 from dotenv import load_dotenv
+from openai import OpenAI
 
-# Cargar variables de entorno
+# Cargar variables de entorno (.env en local, Environment en Render)
 load_dotenv()
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
@@ -10,7 +10,7 @@ DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 if not DEEPSEEK_API_KEY:
     raise RuntimeError("Falta la variable DEEPSEEK_API_KEY en el entorno")
 
-# Cliente apuntando a DeepSeek
+# Cliente apuntando a DeepSeek (usa SDK de OpenAI)
 client = OpenAI(
     api_key=DEEPSEEK_API_KEY,
     base_url="https://api.deepseek.com"
@@ -27,7 +27,7 @@ def ask_ai(prompt: str) -> str:
                 {
                     "role": "system",
                     "content": (
-                        "Sos un asistente experto en stock. "
+                        "Sos un asistente experto en stock de productos. "
                         "Respondé siempre en español, de forma clara y precisa."
                     )
                 },
@@ -40,7 +40,7 @@ def ask_ai(prompt: str) -> str:
             max_tokens=800
         )
 
-        # DeepSeek devuelve el contenido así:
+        # Formato de respuesta del SDK de OpenAI / DeepSeek
         return response.choices[0].message.content
 
     except Exception as e:
