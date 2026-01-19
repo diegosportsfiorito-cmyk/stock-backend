@@ -3,3 +3,5 @@ uvicorn
 pandas
 openpyxl
 requests
+python-dotenv
+groq
