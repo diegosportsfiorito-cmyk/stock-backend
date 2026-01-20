@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-pandas
-openpyxl
+google-api-python-client
+google-auth
+google-auth-oauthlib
+PyPDF2
+pytesseract
+Pillow
 requests
-python-dotenv
-groq
-openai
-
