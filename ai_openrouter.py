@@ -5,7 +5,8 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
-MODEL = "google/gemini-flash-1.5"   # modelo gratuito
+# Modelo gratuito y disponible
+MODEL = "meta-llama/llama-3.1-8b-instruct"
 
 
 def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
