@@ -1,11 +1,10 @@
-# main.py
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from indexer import build_unified_context
 from ai_openrouter import ask_openrouter
 
-app = FastAPI(title="Stock Backend Notebook-Like")
+app = FastAPI(title="Notebook-Like Backend")
 
 class QueryRequest(BaseModel):
     question: str
@@ -36,7 +35,3 @@ def query(req: QueryRequest):
     answer = ask_openrouter(SYSTEM_PROMPT, user_prompt)
 
     return QueryResponse(answer=answer)
-
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "Backend Notebook-Like activo."}
