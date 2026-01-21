@@ -12,7 +12,7 @@ def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://stock-backend-1-twzg.onrender.com",
+        "Referer": "https://stock-backend-1-twzg.onrender.com",
         "X-Title": "Stock Backend",
     }
 
@@ -27,7 +27,6 @@ def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
 
     resp = requests.post(URL, json=payload, headers=headers, timeout=60)
 
-    # si falla, imprimimos la respuesta para ver el motivo real
     if resp.status_code != 200:
         print("OpenRouter error:", resp.status_code, resp.text)
 
