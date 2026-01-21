@@ -13,6 +13,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.post("/query")
 async def query(request: Request):
     body = await request.json()
@@ -31,3 +32,4 @@ async def query(request: Request):
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "Stock backend activo"}
+
