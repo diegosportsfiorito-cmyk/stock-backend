@@ -1,36 +1,79 @@
 # indexer.py
-from typing import Dict, Any, List
-from drive import collect_drive_corpus
+import io
+from typing import List, Dict
+from datetime import datetime
 
-def build_unified_context() -> str:
+import pandas as pd
+
+from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
+
+# ID de la carpeta de Drive (solo el ID, no la URL completa)
+CARPETA_STOCK_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
+
+
+def extraer_contenido_excel(file_bytes: bytes, nombre_archivo: str) -> str:
     """
-    Convierte todo el corpus en un gran contexto textual
-    para pasárselo a la IA.
+    Lee un Excel y devuelve un resumen de contenido en texto.
+    Por ahora: concatenamos filas relevantes.
+    Más adelante podemos hacer algo más sofisticado.
     """
-    corpus = collect_drive_corpus()
-    chunks: List[str] = []
+    try:
+        excel_file = io.BytesIO(file_bytes)
+        xls = pd.ExcelFile(excel_file)
 
-    # Sheets
-    for sheet_file in corpus["sheets"]:
-        chunks.append(f"=== GOOGLE SHEET: {sheet_file['name']} ===")
-        for sheet_name, rows in sheet_file["sheets"].items():
-            chunks.append(f"-- Hoja: {sheet_name} --")
-            for row in rows:
-                line = " | ".join(row)
-                chunks.append(line)
+        partes = []
+        for sheet_name in xls.sheet_names:
+            df = xls.parse(sheet_name)
+            # Limitamos filas para no explotar el contexto
+            df = df.head(200)
+            partes.append(f"Hoja: {sheet_name}\n{df.to_string(index=False)}\n")
 
-    # PDFs
-    for pdf in corpus["pdfs"]:
-        chunks.append(f"=== PDF: {pdf['name']} ===")
-        chunks.append(pdf["text"])
+        return "\n".join(partes)
+    except Exception as e:
+        return f"No se pudo leer el Excel {nombre_archivo}: {e}"
 
-    # Imágenes (OCR)
-    for img in corpus["images"]:
-        chunks.append(f"=== IMAGEN (OCR): {img['name']} ===")
-        chunks.append(img["text"])
 
-    # Otros (solo metadata)
-    for other in corpus["others"]:
-        chunks.append(f"=== OTRO ARCHIVO: {other['name']} ({other.get('mimeType', 'desconocido')}) ===")
+def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
+    """
+    1) Lista archivos de la carpeta de Drive.
+    2) Filtra por extensión Excel.
+    3) Descarga y extrae contenido.
+    4) Devuelve lista de dicts con archivo, fecha, contenido.
+    Más adelante podemos hacer selección inteligente según la pregunta.
+    """
+    archivos = listar_archivos_en_carpeta(CARPETA_STOCK_ID)
 
-    return "\n".join(chunks)
+    contextos: List[Dict] = []
+
+    for archivo in archivos:
+        nombre = archivo["name"]
+        file_id = archivo["id"]
+        mime_type = archivo.get("mimeType", "")
+        mod_time = archivo.get("modifiedTime")
+
+        if not (nombre.lower().endswith(".xlsx") or nombre.lower().endswith(".xls")):
+            continue
+
+        file_bytes = descargar_archivo_por_id(file_id)
+
+        contenido = extraer_contenido_excel(file_bytes, nombre)
+
+        # Formateamos fecha
+        fecha_str = None
+        if mod_time:
+            try:
+                dt = datetime.fromisoformat(mod_time.replace("Z", "+00:00"))
+                fecha_str = dt.strftime("%Y-%m-%d")
+            except Exception:
+                fecha_str = mod_time
+
+        contextos.append(
+            {
+                "archivo": nombre,
+                "fecha": fecha_str or "Fecha desconocida",
+                "contenido": contenido,
+            }
+        )
+
+    # Por ahora devolvemos todos. Más adelante podemos filtrar por relevancia.
+    return contextos
