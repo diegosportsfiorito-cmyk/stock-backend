@@ -4,7 +4,10 @@ import requests
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "openai/gpt-4.1-mini"  # ajustable
+
+# Modelo universal que siempre funciona, incluso sin crédito
+MODEL = "openrouter/auto"
+
 
 def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
     headers = {
@@ -21,7 +24,13 @@ def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
         "temperature": 0.2,
     }
 
-    resp = requests.post(OPENROUTER_BASE_URL, json=payload, headers=headers, timeout=60)
+    resp = requests.post(
+        OPENROUTER_BASE_URL,
+        json=payload,
+        headers=headers,
+        timeout=60
+    )
+
     resp.raise_for_status()
     data = resp.json()
 
