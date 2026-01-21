@@ -1,24 +1,6 @@
 fastapi
 uvicorn
 requests
-
-# Google Drive API
-google-api-python-client
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-
-# Excel / CSV
-pandas
-openpyxl
-
-# PDF
-PyPDF2
-
-# Imágenes (OCR futuro)
-pytesseract
-Pillow
-
 python-dotenv
 
 pandas
@@ -29,3 +11,7 @@ google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+
+PyPDF2
+pytesseract
+Pillow
