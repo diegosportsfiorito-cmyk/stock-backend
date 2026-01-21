@@ -1,6 +1,8 @@
 import os
 import requests
 
+print("🔥 CARGANDO AI_OPENROUTER CORRECTO")
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -35,3 +37,4 @@ def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
     data = resp.json()
 
     return data["choices"][0]["message"]["content"]
+
