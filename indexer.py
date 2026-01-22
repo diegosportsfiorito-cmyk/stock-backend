@@ -154,7 +154,7 @@ def filtrar_por_pregunta(df: pd.DataFrame, pregunta: str) -> pd.DataFrame:
 
 
 # ============================================================
-# LECTURA DEL EXCEL
+# LECTURA DEL EXCEL (AQUÍ ESTABA EL ERROR)
 # ============================================================
 
 def extraer_contenido_excel(file_bytes: bytes, nombre_archivo: str, pregunta: str) -> str:
@@ -167,7 +167,11 @@ def extraer_contenido_excel(file_bytes: bytes, nombre_archivo: str, pregunta: st
         for sheet_name in xls.sheet_names:
             df = xls.parse(sheet_name, dtype=str)
             df = df.fillna("")
-            df = df.applymap(lambda x: str(x).strip())
+
+            # 🔧 FIX: reemplazo de applymap (que fallaba en Render)
+            for col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+
             df = normalizar_encabezados(df)
             df_total.append(df)
 
@@ -205,7 +209,7 @@ def extraer_contenido_excel(file_bytes: bytes, nombre_archivo: str, pregunta: st
 
 
 # ============================================================
-# CONTEXTO PARA LA IA (CON DEBUG)
+# CONTEXTO PARA LA IA (DEBUG)
 # ============================================================
 
 def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
