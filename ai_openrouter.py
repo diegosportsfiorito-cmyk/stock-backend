@@ -30,7 +30,7 @@ def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
 
     if resp.status_code != 200:
         print("OpenRouter error:", resp.status_code, resp.text)
-        return "La consulta es demasiado grande o inválida, o hubo un problema con el modelo. Probá ser más específico."
+        return "La consulta es demasiado grande o inválida, o hubo un problema con el modelo."
 
     data = resp.json()
     try:
