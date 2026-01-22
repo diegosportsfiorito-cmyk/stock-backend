@@ -2,7 +2,6 @@
 import io
 import re
 from typing import List, Dict
-from datetime import datetime
 import pandas as pd
 
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
@@ -183,3 +182,41 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
 
     except Exception as e:
         return f"ERROR LECTURA EXCEL: {e}"
+
+# ============================================================
+# CONTEXTO PARA LA IA (DEBUG + MULTI-ARCHIVO)
+# ============================================================
+
+def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
+    archivos = listar_archivos_en_carpeta(CARPETA_STOCK_ID)
+    contextos = []
+
+    for archivo in archivos:
+        nombre = archivo["name"]
+        file_id = archivo["id"]
+        mod_time = archivo.get("modifiedTime")
+
+        if not nombre.lower().endswith(".xlsx"):
+            continue
+
+        try:
+            file_bytes = descargar_archivo_por_id(file_id)
+            contenido = extraer_contenido_excel(file_bytes, nombre, pregunta)
+
+            print("\n\n================ DEBUG INDEXER ================")
+            print("Archivo:", nombre)
+            print("Pregunta:", pregunta)
+            print("Contenido (primeros 800 chars):")
+            print(contenido[:800])
+            print("===============================================\n\n")
+
+            contextos.append({
+                "archivo": nombre,
+                "fecha": mod_time or "Fecha desconocida",
+                "contenido": contenido
+            })
+
+        except Exception as e:
+            print(f"ERROR procesando archivo {nombre}: {e}")
+
+    return contextos
