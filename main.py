@@ -3,8 +3,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from indexer import obtener_contexto_para_pregunta
-from ai_engine import consultar_ia  # tu función que llama al modelo
+from ai_engine import responder_pregunta   # ✔ ESTA ES TU FUNCIÓN REAL
+from indexer import obtener_contexto_para_pregunta   # para debug opcional
+
 
 app = FastAPI()
 
@@ -28,8 +29,8 @@ async def query(p: Pregunta):
     print("\n\n=========== DEBUG /query ===========")
     print("Pregunta recibida:", pregunta)
 
+    # DEBUG: ver qué devuelve el indexer ANTES de llamar a la IA
     contextos = obtener_contexto_para_pregunta(pregunta)
-
     print("Cantidad de contextos:", len(contextos))
     if contextos:
         print("Primer contexto archivo:", contextos[0]["archivo"])
@@ -37,9 +38,7 @@ async def query(p: Pregunta):
         print(contextos[0]["contenido"][:400])
     print("====================================\n\n")
 
-    respuesta = consultar_ia(pregunta, contextos)
+    # ✔ Llamada correcta a tu función real
+    resultado = responder_pregunta(pregunta)
 
-    return {
-        "respuesta": respuesta,
-        "fuente": contextos
-    }
+    return resultado
