@@ -3,7 +3,7 @@ import io
 import re
 from typing import List, Dict
 import pandas as pd
-
+ 
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 CARPETA_STOCK_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
@@ -285,3 +285,4 @@ def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
             print(f"ERROR procesando archivo {nombre}: {e}")
 
     return contextos
+
