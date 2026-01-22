@@ -1,7 +1,10 @@
-from fastapi import FastAPI, Request
+# main.py
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-from ai_engine import responder_pregunta
+from indexer import obtener_contexto_para_pregunta
+from ai_engine import consultar_ia  # tu función que llama al modelo
 
 app = FastAPI()
 
@@ -13,23 +16,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class Pregunta(BaseModel):
+    question: str
+
+
 @app.post("/query")
-async def query(request: Request):
-    body = await request.json()
-    pregunta = body.get("pregunta") or body.get("question") or body.get("query")
+async def query(p: Pregunta):
+    pregunta = p.question.strip()
 
-    if not pregunta:
-        return {"error": "Falta el campo 'pregunta'."}
+    print("\n\n=========== DEBUG /query ===========")
+    print("Pregunta recibida:", pregunta)
 
-    resultado = responder_pregunta(pregunta)
+    contextos = obtener_contexto_para_pregunta(pregunta)
+
+    print("Cantidad de contextos:", len(contextos))
+    if contextos:
+        print("Primer contexto archivo:", contextos[0]["archivo"])
+        print("Primer contexto contenido (primeros 400 chars):")
+        print(contextos[0]["contenido"][:400])
+    print("====================================\n\n")
+
+    respuesta = consultar_ia(pregunta, contextos)
 
     return {
-        "answer": resultado["respuesta"],
-        "fuente": resultado["fuente"],
+        "respuesta": respuesta,
+        "fuente": contextos
     }
-
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "Stock backend activo"}
-
-
