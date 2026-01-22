@@ -1,39 +1,12 @@
-import re
+# intent_engine.py
 
-def detect_intent(query):
-    q = query.lower()
+def clasificar_intencion(pregunta: str) -> str:
+    p = pregunta.lower()
 
-    # Detectar código de artículo
-    codigo = None
-    m = re.search(r"\d{5,}", q)
-    if m:
-        codigo = m.group()
+    if any(x in p for x in ["stock", "hay de", "talle", "talles", "disponible", "disponibilidad"]):
+        return "consulta_stock"
 
-    # Detectar talle
-    talle = None
-    m2 = re.search(r"talle\s+(\d+\.?\d*)", q)
-    if m2:
-        talle = m2.group(1)
+    if any(x in p for x in ["precio", "lista", "cuanto sale", "vale"]):
+        return "consulta_precio"
 
-    # Stock por código
-    if "stock" in q and codigo:
-        return {"intent": "stock_por_codigo", "codigo": codigo, "talle": talle}
-
-    # Precio por código
-    if "precio" in q and codigo:
-        return {"intent": "precio_por_codigo", "codigo": codigo}
-
-    # Análisis global
-    if "análisis" in q or "analisis" in q or "global" in q:
-        return {"intent": "analisis_global"}
-
-    # Stock negativo
-    if "negativo" in q:
-        return {"intent": "stock_negativo"}
-
-    # Sin stock
-    if "sin stock" in q:
-        return {"intent": "sin_stock"}
-
-    # Consultas complejas → IA pura
-    return {"intent": "consulta_compleja", "query": query}
+    return "general"
