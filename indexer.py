@@ -25,10 +25,7 @@ MAPA_COLORES = {
 
 
 def normalizar_talle(valor: str) -> str:
-    """
-    Convierte talles tipo '26/7' en '26-27'.
-    Maneja casos como '27/8', '30/1', '29/0', etc.
-    """
+    """Convierte talles tipo '26/7' en '26-27'."""
     if isinstance(valor, str) and "/" in valor:
         partes = valor.split("/")
         if len(partes) == 2 and partes[0].isdigit() and partes[1].isdigit():
@@ -39,10 +36,7 @@ def normalizar_talle(valor: str) -> str:
 
 
 def normalizar_color(valor: str) -> str:
-    """
-    Normaliza colores, expandiendo abreviaturas y unificando formato.
-    Ej: 'NE/BLA' -> 'NEGRO-BLANCO'
-    """
+    """Normaliza colores, expandiendo abreviaturas."""
     if not isinstance(valor, str):
         return valor
 
@@ -57,13 +51,11 @@ def normalizar_color(valor: str) -> str:
 
 
 def normalizar_descripcion(valor: str) -> str:
-    """
-    Limpia espacios y aplica formato tipo título.
-    """
+    """Limpia espacios y aplica formato título."""
     if not isinstance(valor, str):
         return valor
     valor = valor.strip()
-    valor = " ".join(valor.split())  # elimina espacios dobles
+    valor = " ".join(valor.split())
     return valor.title()
 
 
@@ -72,24 +64,6 @@ def normalizar_descripcion(valor: str) -> str:
 # ============================================================
 
 def agrupar_por_articulo(df: pd.DataFrame) -> Dict[str, Dict]:
-    """
-    Devuelve un diccionario:
-    {
-        "01303-4": {
-            "descripcion": "...",
-            "color": "...",
-            "stock_total": 6,
-            "talles": {
-                "27-28": 2,
-                "28-29": 4
-            },
-            "precio_publico": 30000,
-            "precio_costo": 13347,
-            "ultimo_ingreso": "2025-08-19",
-            "ventas": {2026: 1, 2025: 2, ...}
-        }
-    }
-    """
     grupos: Dict[str, Dict] = {}
 
     for _, row in df.iterrows():
@@ -122,10 +96,7 @@ def agrupar_por_articulo(df: pd.DataFrame) -> Dict[str, Dict]:
                 "ventas": {}
             }
 
-        # Stock total
         grupos[codigo]["stock_total"] += stock
-
-        # Stock por talle
         grupos[codigo]["talles"][talle] = grupos[codigo]["talles"].get(talle, 0) + stock
 
         # Ventas por año (columnas dinámicas)
@@ -141,16 +112,17 @@ def agrupar_por_articulo(df: pd.DataFrame) -> Dict[str, Dict]:
 
 
 # ============================================================
-# FILTRADO INTELIGENTE SEGÚN LA PREGUNTA
+# FILTRADO INTELIGENTE A PRUEBA DE FALLOS
 # ============================================================
 
 def filtrar_por_pregunta(df: pd.DataFrame, pregunta: str) -> pd.DataFrame:
     p = pregunta.lower()
 
-    # Si el usuario menciona un código de artículo
-    for codigo in df["articulo"].unique():
-        if isinstance(codigo, str) and codigo.lower() in p:
-            return df[df["articulo"] == codigo]
+    # Solo filtramos por código si la columna existe
+    if "articulo" in df.columns:
+        for codigo in df["articulo"].unique():
+            if isinstance(codigo, str) and codigo.lower() in p:
+                return df[df["articulo"] == codigo]
 
     # Búsqueda por texto en todas las columnas
     mask = df.apply(lambda row: p in str(row).lower(), axis=1)
@@ -178,7 +150,7 @@ def extraer_contenido_excel(file_bytes: bytes, nombre_archivo: str, pregunta: st
             df = df.fillna("")
             df = df.applymap(lambda x: str(x).strip())
 
-            # NORMALIZACIÓN DE ENCABEZADOS (CRÍTICO)
+            # NORMALIZACIÓN DE ENCABEZADOS
             df.columns = (
                 df.columns
                 .str.strip()
