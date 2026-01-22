@@ -19,11 +19,32 @@ ALIAS = {
     "proveedor": ["proveedor", "supplier"],
 }
 
-def obtener_columna(df, posibles):
-    for col in posibles:
-        if col in df.columns:
+# ============================================================
+# DETECCIÓN AUTOMÁTICA DE COLUMNA CÓDIGO
+# ============================================================
+
+def detectar_columna_codigo(df):
+    # 1) Buscar por nombre conocido
+    posibles = ["articulo", "artículo", "codigo", "cod", "id", "sku"]
+    for col in df.columns:
+        if col.lower().replace(" ", "") in posibles:
             return col
-    return None
+
+    # 2) Heurística: columna con más valores tipo código
+    mejor_col = None
+    mejor_score = 0
+
+    for col in df.columns:
+        score = 0
+        for val in df[col].head(20):
+            s = str(val).strip()
+            if 2 <= len(s) <= 20 and re.match(r"^[A-Za-z0-9\-]+$", s):
+                score += 1
+        if score > mejor_score:
+            mejor_score = score
+            mejor_col = col
+
+    return mejor_col
 
 # ============================================================
 # NORMALIZACIÓN
@@ -78,7 +99,7 @@ def normalizar_descripcion(valor: str) -> str:
 # ============================================================
 
 def extraer_codigo(pregunta: str) -> str:
-    m = re.search(r"\b[\d\-]{4,}\b", pregunta.lower())
+    m = re.search(r"\b[A-Za-z0-9\-]{3,}\b", pregunta)
     return m.group(0) if m else ""
 
 def filtrar_por_texto(df, pregunta):
@@ -91,7 +112,12 @@ def filtrar_por_columnas_opcionales(df, pregunta):
     filtros = []
 
     for campo, alias in ALIAS.items():
-        col = obtener_columna(df, alias)
+        col = None
+        for posible in alias:
+            if posible in df.columns:
+                col = posible
+                break
+
         if col:
             mask = df[col].astype(str).str.lower().str.contains(p)
             filtros.append(df[mask])
@@ -123,10 +149,15 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
 
         df = pd.concat(df_total, ignore_index=True)
 
+        # DETECTAR COLUMNA CÓDIGO
+        col_codigo = detectar_columna_codigo(df)
+        if not col_codigo:
+            return "No se pudo detectar la columna de código."
+
         # FILTRADO
         codigo = extraer_codigo(pregunta)
-        if codigo and "articulo" in df.columns:
-            df_filtrado = df[df["articulo"].astype(str).str.strip() == codigo]
+        if codigo:
+            df_filtrado = df[df[col_codigo].astype(str).str.strip().str.lower() == codigo.lower()]
         else:
             df_filtrado = filtrar_por_columnas_opcionales(df, pregunta)
             if df_filtrado.empty:
@@ -138,7 +169,7 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
         # AGRUPACIÓN
         grupos = {}
         for _, row in df_filtrado.iterrows():
-            codigo = str(row.get("articulo", "")).strip()
+            codigo = str(row.get(col_codigo, "")).strip()
             if not codigo:
                 continue
 
@@ -146,9 +177,9 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
                 grupos[codigo] = {
                     "descripcion": normalizar_descripcion(row.get("descripcion_original", "")),
                     "color": normalizar_color(row.get("color", "")),
-                    "marca": row.get(obtener_columna(df, ALIAS["marca"]), ""),
-                    "rubro": row.get(obtener_columna(df, ALIAS["rubro"]), ""),
-                    "grupo": row.get(obtener_columna(df, ALIAS["grupo"]), ""),
+                    "marca": row.get(detectar_columna_codigo(df), ""),
+                    "rubro": row.get("rubro", ""),
+                    "grupo": row.get("grupo", ""),
                     "stock_total": 0,
                     "talles": {},
                 }
@@ -158,9 +189,8 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
             grupos[codigo]["stock_total"] += stock
             grupos[codigo]["talles"][talle] = grupos[codigo]["talles"].get(talle, 0) + stock
 
-        # LIMITADOR DE ARTÍCULOS
-        MAX_ART = 10
-        grupos = dict(list(grupos.items())[:MAX_ART])
+        # LIMITADOR
+        grupos = dict(list(grupos.items())[:10])
 
         # ARMADO DEL TEXTO
         partes = []
@@ -168,9 +198,6 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
             talles = "\n".join([f"  - {t}: {s} unidades" for t, s in info["talles"].items()])
             partes.append(
                 f"Artículo: {codigo}\n"
-                f"Marca: {info['marca']}\n"
-                f"Rubro: {info['rubro']}\n"
-                f"Grupo: {info['grupo']}\n"
                 f"Descripción: {info['descripcion']}\n"
                 f"Color: {info['color']}\n"
                 f"Stock total: {info['stock_total']}\n"
@@ -184,7 +211,7 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
         return f"ERROR LECTURA EXCEL: {e}"
 
 # ============================================================
-# CONTEXTO PARA LA IA (DEBUG + MULTI-ARCHIVO)
+# CONTEXTO PARA LA IA
 # ============================================================
 
 def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
@@ -202,13 +229,6 @@ def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
         try:
             file_bytes = descargar_archivo_por_id(file_id)
             contenido = extraer_contenido_excel(file_bytes, nombre, pregunta)
-
-            print("\n\n================ DEBUG INDEXER ================")
-            print("Archivo:", nombre)
-            print("Pregunta:", pregunta)
-            print("Contenido (primeros 800 chars):")
-            print(contenido[:800])
-            print("===============================================\n\n")
 
             contextos.append({
                 "archivo": nombre,
