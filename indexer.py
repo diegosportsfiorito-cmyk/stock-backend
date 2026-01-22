@@ -1,3 +1,4 @@
+# FORCE UPDATE 2026-01-22
 # indexer.py
 import io
 import re
@@ -285,4 +286,5 @@ def obtener_contexto_para_pregunta(pregunta: str) -> List[Dict]:
             print(f"ERROR procesando archivo {nombre}: {e}")
 
     return contextos
+
 
