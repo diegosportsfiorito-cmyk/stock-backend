@@ -19,18 +19,22 @@ ALIAS = {
     "proveedor": ["proveedor", "supplier"],
 }
 
+def obtener_columna(df, posibles):
+    for col in posibles:
+        if col in df.columns:
+            return col
+    return None
+
 # ============================================================
 # DETECCIÓN AUTOMÁTICA DE COLUMNA CÓDIGO
 # ============================================================
 
 def detectar_columna_codigo(df):
-    # 1) Buscar por nombre conocido
     posibles = ["articulo", "artículo", "codigo", "cod", "id", "sku"]
     for col in df.columns:
         if col.lower().replace(" ", "") in posibles:
             return col
 
-    # 2) Heurística: columna con más valores tipo código
     mejor_col = None
     mejor_score = 0
 
@@ -112,12 +116,7 @@ def filtrar_por_columnas_opcionales(df, pregunta):
     filtros = []
 
     for campo, alias in ALIAS.items():
-        col = None
-        for posible in alias:
-            if posible in df.columns:
-                col = posible
-                break
-
+        col = obtener_columna(df, alias)
         if col:
             mask = df[col].astype(str).str.lower().str.contains(p)
             filtros.append(df[mask])
@@ -149,12 +148,10 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
 
         df = pd.concat(df_total, ignore_index=True)
 
-        # DETECTAR COLUMNA CÓDIGO
         col_codigo = detectar_columna_codigo(df)
         if not col_codigo:
             return "No se pudo detectar la columna de código."
 
-        # FILTRADO
         codigo = extraer_codigo(pregunta)
         if codigo:
             df_filtrado = df[df[col_codigo].astype(str).str.strip().str.lower() == codigo.lower()]
@@ -166,40 +163,40 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
         if df_filtrado.empty:
             return "No se encontraron artículos relevantes."
 
-        # AGRUPACIÓN
         grupos = {}
         for _, row in df_filtrado.iterrows():
-            codigo = str(row.get(col_codigo, "")).strip()
-            if not codigo:
+            cod = str(row.get(col_codigo, "")).strip()
+            if not cod:
                 continue
 
-            if codigo not in grupos:
-                grupos[codigo] = {
+            if cod not in grupos:
+                grupos[cod] = {
                     "descripcion": normalizar_descripcion(row.get("descripcion_original", "")),
                     "color": normalizar_color(row.get("color", "")),
-                    "marca": row.get(detectar_columna_codigo(df), ""),
-                    "rubro": row.get("rubro", ""),
-                    "grupo": row.get("grupo", ""),
+                    "marca": row.get(obtener_columna(df, ALIAS["marca"]), ""),
+                    "rubro": row.get(obtener_columna(df, ALIAS["rubro"]), ""),
+                    "grupo": row.get(obtener_columna(df, ALIAS["grupo"]), ""),
                     "stock_total": 0,
                     "talles": {},
                 }
 
             talle = normalizar_talle(row.get("talle", ""))
             stock = int(parse_numero(row.get("stock", "0")))
-            grupos[codigo]["stock_total"] += stock
-            grupos[codigo]["talles"][talle] = grupos[codigo]["talles"].get(talle, 0) + stock
+            grupos[cod]["stock_total"] += stock
+            grupos[cod]["talles"][talle] = grupos[cod]["talles"].get(talle, 0) + stock
 
-        # LIMITADOR
         grupos = dict(list(grupos.items())[:10])
 
-        # ARMADO DEL TEXTO
         partes = []
-        for codigo, info in grupos.items():
+        for cod, info in grupos.items():
             talles = "\n".join([f"  - {t}: {s} unidades" for t, s in info["talles"].items()])
             partes.append(
-                f"Artículo: {codigo}\n"
+                f"Artículo: {cod}\n"
                 f"Descripción: {info['descripcion']}\n"
                 f"Color: {info['color']}\n"
+                f"Marca: {info['marca']}\n"
+                f"Rubro: {info['rubro']}\n"
+                f"Grupo: {info['grupo']}\n"
                 f"Stock total: {info['stock_total']}\n"
                 f"Talles:\n{talles}\n"
                 "-------------------------\n"
