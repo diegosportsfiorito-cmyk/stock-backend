@@ -1,4 +1,5 @@
 # intent_engine.py
+# test cambio render
   
 def clasificar_intencion(pregunta: str) -> str:
     p = pregunta.lower()
@@ -10,4 +11,5 @@ def clasificar_intencion(pregunta: str) -> str:
         return "consulta_precio"
 
     return "general"
+
 
