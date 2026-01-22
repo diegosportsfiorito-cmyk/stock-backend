@@ -1,37 +1,30 @@
-import os
+# ai_openrouter.py
 import requests
+import os
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Modelo gratuito y disponible
-MODEL = "meta-llama/llama-3.1-8b-instruct"
-
-
-def ask_openrouter(system_prompt: str, user_prompt: str) -> str:
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "Referer": "https://stock-backend-1-twzg.onrender.com",
-        "X-Title": "Stock Backend",
-    }
+def ask_openrouter(system_prompt, user_prompt):
+    url = "https://openrouter.ai/api/v1/chat/completions"
 
     payload = {
-        "model": MODEL,
+        "model": "openai/gpt-4o-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.2,
+            {"role": "user", "content": user_prompt}
+        ]
     }
 
-    resp = requests.post(URL, json=payload, headers=headers, timeout=60)
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    resp = requests.post(url, json=payload, headers=headers)
 
     if resp.status_code != 200:
-        print("OpenRouter error:", resp.status_code, resp.text)
+        print("OpenRouter error:", resp.text)
+        return "La consulta es demasiado grande o inválida. Probá ser más específico."
 
-    resp.raise_for_status()
     data = resp.json()
-
     return data["choices"][0]["message"]["content"]
