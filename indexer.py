@@ -9,7 +9,7 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 CARPETA_STOCK_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
 # ============================================================
-# MAPA DE ALIAS PARA COLUMNAS OPCIONALES
+# ALIAS PARA COLUMNAS OPCIONALES
 # ============================================================
 
 ALIAS = {
@@ -49,6 +49,23 @@ def detectar_columna_codigo(df):
             mejor_col = col
 
     return mejor_col
+
+# ============================================================
+# DETECCIÓN AUTOMÁTICA DE COLUMNAS DE PRECIO
+# ============================================================
+
+def detectar_columnas_precio(df):
+    col_publico = None
+    col_costo = None
+
+    for col in df.columns:
+        c = col.lower().replace(" ", "")
+        if c in ["lista1", "precio1", "publico", "ppublico"]:
+            col_publico = col
+        if c in ["lista0", "precio0", "costo", "pcosto"]:
+            col_costo = col
+
+    return col_publico, col_costo
 
 # ============================================================
 # NORMALIZACIÓN
@@ -125,6 +142,25 @@ def filtrar_por_columnas_opcionales(df, pregunta):
         return pd.concat(filtros).drop_duplicates()
 
     return pd.DataFrame()
+
+# ============================================================
+# OBTENER PRECIOS
+# ============================================================
+
+def obtener_precios(df, col_codigo, codigo):
+    df_art = df[df[col_codigo].astype(str).str.strip().str.lower() == codigo.lower()]
+    if df_art.empty:
+        return None
+
+    col_publico, col_costo = detectar_columnas_precio(df)
+
+    precio_publico = df_art[col_publico].iloc[0] if col_publico else None
+    precio_costo = df_art[col_costo].iloc[0] if col_costo else None
+
+    return {
+        "publico": precio_publico,
+        "costo": precio_costo
+    }
 
 # ============================================================
 # LECTURA DEL EXCEL
