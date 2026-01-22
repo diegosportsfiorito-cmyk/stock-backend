@@ -226,6 +226,16 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
         partes = []
         for cod, info in grupos.items():
             talles = "\n".join([f"  - {t}: {s} unidades" for t, s in info["talles"].items()])
+
+            precios = obtener_precios(df, col_codigo, cod)
+            linea_precio_publico = ""
+            linea_precio_costo = ""
+            if precios:
+                if precios["publico"] is not None:
+                    linea_precio_publico = f"Precio público (LISTA1): {precios['publico']}\n"
+                if precios["costo"] is not None:
+                    linea_precio_costo = f"Precio de costo (LISTA0): {precios['costo']}\n"
+
             partes.append(
                 f"Artículo: {cod}\n"
                 f"Descripción: {info['descripcion']}\n"
@@ -234,6 +244,8 @@ def extraer_contenido_excel(file_bytes, nombre_archivo, pregunta):
                 f"Rubro: {info['rubro']}\n"
                 f"Grupo: {info['grupo']}\n"
                 f"Stock total: {info['stock_total']}\n"
+                f"{linea_precio_publico}"
+                f"{linea_precio_costo}"
                 f"Talles:\n{talles}\n"
                 "-------------------------\n"
             )
