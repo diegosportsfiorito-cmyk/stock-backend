@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
 from indexer import buscar_articulo_en_archivos
 
 app = FastAPI()
@@ -26,22 +27,25 @@ async def query(p: Pregunta):
         respuesta = "No encontré artículos relacionados con tu consulta."
         return {"respuesta": respuesta, "voz": respuesta, "fuente": None}
 
-    # ============================================================
-    # RESPUESTA HUMANA
-    # ============================================================
-
     # Caso 1: artículo por código
     if "codigo" in info:
-        desc = info["descripcion"]
-        stock = info["stock_total"]
-        talles = ", ".join(info["talles"]) if info["talles"] else "sin talles registrados"
-        precio = info["precio_publico"]
+        desc = info.get("descripcion", "el artículo")
+        stock = info.get("stock_total")
+        talles_lista = info.get("talles") or []
+        talles = ", ".join(talles_lista) if talles_lista else "sin talles registrados"
+        precio = info.get("precio_publico")
 
-        respuesta = (
-            f"Encontré el artículo {desc}. "
-            f"Hay {stock} unidades en stock y los talles disponibles son: {talles}. "
-            f"El precio al público es {precio} pesos."
-        )
+        partes = []
+
+        partes.append(f"Encontré {desc}.")
+        if stock is not None:
+            partes.append(f"Hay {stock} unidades en stock.")
+        if talles_lista:
+            partes.append(f"Los talles disponibles son: {talles}.")
+        if precio is not None:
+            partes.append(f"El precio al público es {precio} pesos.")
+
+        respuesta = " ".join(partes)
 
         return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
 
@@ -49,18 +53,21 @@ async def query(p: Pregunta):
     if "lista_completa" in info:
         grupos = info["lista_completa"]
 
+        if not grupos:
+            respuesta = "No encontré artículos relacionados con tu consulta."
+            return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
+
         lineas = []
         for g in grupos[:5]:
+            desc = g["descripcion"]
+            stock = g["stock_total"]
             talles = ", ".join(g["talles"]) if g["talles"] else "sin talles"
-            lineas.append(f"{g['descripcion']} — Stock: {g['stock_total']} — Talles: {talles}")
+            lineas.append(f"{desc} — Stock: {stock} — Talles: {talles}")
 
-        respuesta = (
-            "Esto es lo que encontré:\n" +
-            "\n".join(lineas)
-        )
+        respuesta = "Esto es lo que encontré:\n" + "\n".join(lineas)
 
         return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
 
-    # fallback
+    # Fallback
     respuesta = "Tengo información, pero no pude interpretarla correctamente."
     return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
