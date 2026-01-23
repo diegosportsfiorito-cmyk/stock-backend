@@ -6,6 +6,10 @@ from indexer import buscar_articulo_en_archivos
 
 app = FastAPI()
 
+# ============================================================
+# CORS
+# ============================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,8 +18,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================
+# MODELO DE ENTRADA
+# ============================================================
+
 class Pregunta(BaseModel):
     question: str
+
+# ============================================================
+# ENDPOINT PRINCIPAL
+# ============================================================
 
 @app.post("/query")
 async def query(p: Pregunta):
@@ -23,11 +35,22 @@ async def query(p: Pregunta):
 
     info, fuente = buscar_articulo_en_archivos(pregunta)
 
+    # ============================================================
+    # SIN RESULTADOS
+    # ============================================================
+
     if not info:
         respuesta = "No encontré artículos relacionados con tu consulta."
-        return {"respuesta": respuesta, "voz": respuesta, "fuente": None}
+        return {
+            "respuesta": respuesta,
+            "voz": respuesta,
+            "fuente": fuente
+        }
 
-    # Caso 1: artículo por código
+    # ============================================================
+    # CASO 1: ARTÍCULO POR CÓDIGO
+    # ============================================================
+
     if "codigo" in info:
         desc = info.get("descripcion", "el artículo")
         stock = info.get("stock_total")
@@ -47,15 +70,26 @@ async def query(p: Pregunta):
 
         respuesta = " ".join(partes)
 
-        return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
+        return {
+            "respuesta": respuesta,
+            "voz": respuesta,
+            "fuente": fuente
+        }
 
-    # Caso 2: lista completa por descripción
+    # ============================================================
+    # CASO 2: LISTA COMPLETA POR DESCRIPCIÓN
+    # ============================================================
+
     if "lista_completa" in info:
         grupos = info["lista_completa"]
 
         if not grupos:
             respuesta = "No encontré artículos relacionados con tu consulta."
-            return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
+            return {
+                "respuesta": respuesta,
+                "voz": respuesta,
+                "fuente": fuente
+            }
 
         lineas = []
         for g in grupos[:5]:
@@ -66,8 +100,19 @@ async def query(p: Pregunta):
 
         respuesta = "Esto es lo que encontré:\n" + "\n".join(lineas)
 
-        return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
+        return {
+            "respuesta": respuesta,
+            "voz": respuesta,
+            "fuente": fuente
+        }
 
-    # Fallback
+    # ============================================================
+    # FALLBACK
+    # ============================================================
+
     respuesta = "Tengo información, pero no pude interpretarla correctamente."
-    return {"respuesta": respuesta, "voz": respuesta, "fuente": fuente}
+    return {
+        "respuesta": respuesta,
+        "voz": respuesta,
+        "fuente": fuente
+    }
