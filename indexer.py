@@ -1,6 +1,6 @@
 import io
 import re
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, Tuple
 import pandas as pd
 
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
@@ -8,7 +8,7 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 CARPETA_STOCK_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
 # ============================================================
-# CACHÉ EN MEMORIA
+# CACHÉ
 # ============================================================
 
 CACHE_DF = None
@@ -19,6 +19,12 @@ CACHE_ARCHIVO_META = None
 # ============================================================
 # NORMALIZACIÓN
 # ============================================================
+
+STOPWORDS = {
+    "que", "hay", "tengo", "quiero", "busco", "de", "para", "el", "la",
+    "los", "las", "un", "una", "unos", "unas", "me", "por", "en", "del",
+    "al", "cuanto", "cuantos", "cuantas", "cual", "cuales", "hay"
+}
 
 def normalizar_texto(s: str) -> str:
     if not isinstance(s, str):
@@ -46,71 +52,41 @@ def normalizar_descripcion(valor: str) -> str:
         return ""
     return " ".join(valor.strip().split()).title()
 
-def normalizar_talle(valor: str) -> str:
-    if not isinstance(valor, str):
-        return ""
-    valor = valor.strip()
-    if "/" in valor:
-        return valor
-    return valor
-
 # ============================================================
-# DETECCIÓN DE COLUMNAS SIN ENCABEZADOS
+# DETECCIÓN DE COLUMNAS
 # ============================================================
 
 def detectar_columnas_por_contenido(df: pd.DataFrame) -> Dict[str, str]:
-    """
-    Detecta columnas aunque NO haya encabezados.
-    Usa patrones de contenido para identificar:
-    - código
-    - descripción
-    - color
-    - talle
-    - precio público
-    - precio costo
-    - stock
-    """
-
-    columnas = {c: normalizar_texto(str(c)) for c in df.columns}
     mapeo = {}
 
-    # 1) Detectar código (Artículo)
+    # Código
     for col in df.columns:
         sample = str(df[col].iloc[0]).strip()
         if re.match(r"^[A-Za-z0-9\-]{3,}$", sample):
             mapeo["codigo"] = col
             break
 
-    # 2) Detectar descripción
+    # Descripción
     for col in df.columns:
         col_norm = normalizar_texto(str(col))
         if "descripcion" in col_norm:
             mapeo["descripcion"] = col
             break
 
-    # fallback por contenido
     if "descripcion" not in mapeo:
         for col in df.columns:
-            sample = str(df[col].iloc[0]).lower()
+            sample = str(df[col].iloc[0])
             if len(sample) > 8 and " " in sample:
                 mapeo["descripcion"] = col
                 break
 
-    # 3) Detectar color
-    for col in df.columns:
-        col_norm = normalizar_texto(str(col))
-        if "color" in col_norm:
-            mapeo["color"] = col
-            break
-
-    # 4) Detectar talle
+    # Talle
     for col in df.columns:
         col_norm = normalizar_texto(str(col))
         if "talle" in col_norm:
             mapeo["talle"] = col
             break
 
-    # fallback por contenido
     if "talle" not in mapeo:
         for col in df.columns:
             sample = str(df[col].iloc[0])
@@ -118,25 +94,24 @@ def detectar_columnas_por_contenido(df: pd.DataFrame) -> Dict[str, str]:
                 mapeo["talle"] = col
                 break
 
-    # 5) Detectar precios
+    # Stock
     for col in df.columns:
-        col_norm = normalizar_texto(str(col))
-        if "lista1" in col_norm or "precio1" in col_norm:
-            mapeo["precio_publico"] = col
-        if "lista0" in col_norm or "precio0" in col_norm or "costo" in col_norm:
-            mapeo["precio_costo"] = col
-
-    # 6) Detectar stock
-    for col in df.columns:
-        col_norm = normalizar_texto(str(col))
-        if "stock" in col_norm:
+        if "stock" in normalizar_texto(str(col)):
             mapeo["stock"] = col
             break
+
+    # Precios
+    for col in df.columns:
+        col_norm = normalizar_texto(str(col))
+        if "lista1" in col_norm:
+            mapeo["precio_publico"] = col
+        if "lista0" in col_norm:
+            mapeo["precio_costo"] = col
 
     return mapeo
 
 # ============================================================
-# LECTURA DEL EXCEL (CON O SIN ENCABEZADOS)
+# LECTURA DEL EXCEL
 # ============================================================
 
 def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
@@ -149,12 +124,8 @@ def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
         df = xls.parse(sheet, header=None, dtype=str).fillna("")
         df_total.append(df)
 
-    if not df_total:
-        return pd.DataFrame()
-
     df = pd.concat(df_total, ignore_index=True)
 
-    # Detectar si la primera fila es encabezado
     primera_fila = df.iloc[0].tolist()
     encabezado_probable = any(re.search(r"[A-Za-z]", str(x)) for x in primera_fila)
 
@@ -166,7 +137,6 @@ def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
 
     df = df.reset_index(drop=True)
 
-    # PRINT DE COLUMNAS DETECTADAS (lo que pediste)
     print("COLUMNAS DETECTADAS:", df.columns.tolist())
 
     return df
@@ -210,22 +180,34 @@ def obtener_ultimo_excel_con_cache():
     return None, None
 
 # ============================================================
-# BÚSQUEDA POR DESCRIPCIÓN
+# BÚSQUEDA INTELIGENTE POR DESCRIPCIÓN
 # ============================================================
 
 def buscar_por_descripcion(df, col_desc, pregunta):
-    tokens = normalizar_texto(pregunta).split()
+    tokens = [
+        t for t in normalizar_texto(pregunta).split()
+        if t not in STOPWORDS and len(t) > 2
+    ]
+
+    if not tokens:
+        return pd.DataFrame()
+
     desc = df[col_desc].astype(str).str.lower()
 
-    mask = True
+    # OR en vez de AND
+    mask = False
     for t in tokens:
-        mask = mask & desc.str.contains(t, na=False)
+        mask = mask | desc.str.contains(t, na=False)
 
     resultados = df[mask].copy()
     if resultados.empty:
         return resultados
 
-    resultados["score"] = resultados[col_desc].str.count("|".join(tokens))
+    # Score por cantidad de coincidencias
+    resultados["score"] = resultados[col_desc].str.lower().apply(
+        lambda x: sum(t in x for t in tokens)
+    )
+
     return resultados.sort_values("score", ascending=False)
 
 # ============================================================
@@ -266,11 +248,10 @@ def buscar_articulo_en_archivos(pregunta: str):
     col_publico = columnas.get("precio_publico")
     col_costo = columnas.get("precio_costo")
 
-    # Normalizar descripción
     if col_desc:
         df[col_desc] = df[col_desc].astype(str).apply(normalizar_descripcion)
 
-    # 1) Búsqueda por código
+    # Búsqueda por código
     if col_codigo:
         tokens = re.findall(r"[A-Za-z0-9\-]{2,}", pregunta)
         for t in tokens:
@@ -284,12 +265,12 @@ def buscar_articulo_en_archivos(pregunta: str):
                     "precio_publico": parse_numero(fila[col_publico]) if col_publico else None,
                     "precio_costo": parse_numero(fila[col_costo]) if col_costo else None,
                     "stock_total": int(sum(parse_numero(v) for v in df_art[col_stock])) if col_stock else None,
-                    "talles": sorted({normalizar_talle(x) for x in df_art[col_talle]}) if col_talle else [],
+                    "talles": sorted({str(x).strip() for x in df_art[col_talle]}) if col_talle else [],
                 }
 
                 return info, archivo
 
-    # 2) Búsqueda por descripción
+    # Búsqueda por descripción
     if col_desc:
         encontrados = buscar_por_descripcion(df, col_desc, pregunta)
         if not encontrados.empty:
