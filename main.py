@@ -1,18 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
 from indexer import buscar_articulo_en_archivos
 
 app = FastAPI()
 
 # ============================================================
-# CORS
+# CORS (permitir frontend)
 # ============================================================
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Podés restringir a tu dominio si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -22,7 +21,7 @@ app.add_middleware(
 # MODELO DE ENTRADA
 # ============================================================
 
-class Pregunta(BaseModel):
+class QueryRequest(BaseModel):
     question: str
 
 # ============================================================
@@ -30,89 +29,111 @@ class Pregunta(BaseModel):
 # ============================================================
 
 @app.post("/query")
-async def query(p: Pregunta):
-    pregunta = p.question.strip()
+async def query(req: QueryRequest):
+    pregunta = req.question.strip()
 
-    info, fuente = buscar_articulo_en_archivos(pregunta)
+    try:
+        info, fuente = buscar_articulo_en_archivos(pregunta)
 
-    # ============================================================
-    # SIN RESULTADOS
-    # ============================================================
-
-    if not info:
-        respuesta = "No encontré artículos relacionados con tu consulta."
-        return {
-            "respuesta": respuesta,
-            "voz": respuesta,
-            "fuente": fuente
-        }
-
-    # ============================================================
-    # CASO 1: ARTÍCULO POR CÓDIGO
-    # ============================================================
-
-    if "codigo" in info:
-        desc = info.get("descripcion", "el artículo")
-        stock = info.get("stock_total")
-        talles_lista = info.get("talles") or []
-        talles = ", ".join(talles_lista) if talles_lista else "sin talles registrados"
-        precio = info.get("precio_publico")
-
-        partes = []
-
-        partes.append(f"Encontré {desc}.")
-        if stock is not None:
-            partes.append(f"Hay {stock} unidades en stock.")
-        if talles_lista:
-            partes.append(f"Los talles disponibles son: {talles}.")
-        if precio is not None:
-            partes.append(f"El precio al público es {precio} pesos.")
-
-        respuesta = " ".join(partes)
-
-        return {
-            "respuesta": respuesta,
-            "voz": respuesta,
-            "fuente": fuente
-        }
-
-    # ============================================================
-    # CASO 2: LISTA COMPLETA POR DESCRIPCIÓN
-    # ============================================================
-
-    if "lista_completa" in info:
-        grupos = info["lista_completa"]
-
-        if not grupos:
-            respuesta = "No encontré artículos relacionados con tu consulta."
+        if info is None:
             return {
-                "respuesta": respuesta,
-                "voz": respuesta,
-                "fuente": fuente
+                "respuesta": "No encontré artículos relacionados con tu consulta.",
+                "voz": "No encontré artículos relacionados con tu consulta.",
+                "fuente": fuente,
             }
 
-        lineas = []
-        for g in grupos[:5]:
-            desc = g["descripcion"]
-            stock = g["stock_total"]
-            talles = ", ".join(g["talles"]) if g["talles"] else "sin talles"
-            lineas.append(f"{desc} — Stock: {stock} — Talles: {talles}")
+        # ============================================================
+        # FORMATEO DE RESPUESTA PARA EL FRONTEND
+        # ============================================================
 
-        respuesta = "Esto es lo que encontré:\n" + "\n".join(lineas)
+        # 1) Producto individual
+        if info.get("tipo") == "producto":
+            descripcion = info.get("descripcion", "")
+            codigo = info.get("codigo", "")
+            marca = info.get("marca", "")
+            rubro = info.get("rubro", "")
+            stock_total = info.get("stock_total", 0)
+            precio = info.get("precio", None)
 
+            voz = f"{descripcion}. Stock total {stock_total} unidades."
+            if precio:
+                voz += f" Precio {precio} pesos."
+
+            return {
+                "tipo": "producto",
+                "data": info,
+                "voz": voz,
+                "fuente": fuente,
+            }
+
+        # 2) Lista de productos (marca, rubro, talle o búsqueda general)
+        if info.get("tipo") == "lista":
+            lista = info.get("lista_completa", [])
+            cantidad = len(lista)
+
+            voz = f"Encontré {cantidad} modelos relacionados."
+
+            return {
+                "tipo": "lista",
+                "cantidad": cantidad,
+                "lista": lista,
+                "voz": voz,
+                "fuente": fuente,
+            }
+
+        # 3) Resumen por marca
+        if info.get("tipo") == "marca_resumen":
+            marca = info.get("marca", "")
+            stock_total = info.get("stock_total", 0)
+            valorizado_total = info.get("valorizado_total", 0)
+
+            voz = f"La marca {marca} tiene {stock_total} unidades en total."
+            if valorizado_total:
+                voz += f" El valorizado total es de {valorizado_total} pesos."
+
+            return {
+                "tipo": "marca_resumen",
+                "data": info,
+                "voz": voz,
+                "fuente": fuente,
+            }
+
+        # 4) Resumen por rubro
+        if info.get("tipo") == "rubro_resumen":
+            rubro = info.get("rubro", "")
+            stock_total = info.get("stock_total", 0)
+            valorizado_total = info.get("valorizado_total", 0)
+
+            voz = f"El rubro {rubro} tiene {stock_total} unidades en total."
+            if valorizado_total:
+                voz += f" El valorizado total es de {valorizado_total} pesos."
+
+            return {
+                "tipo": "rubro_resumen",
+                "data": info,
+                "voz": voz,
+                "fuente": fuente,
+            }
+
+        # Fallback
         return {
-            "respuesta": respuesta,
-            "voz": respuesta,
-            "fuente": fuente
+            "respuesta": "No pude interpretar la consulta.",
+            "voz": "No pude interpretar la consulta.",
+            "fuente": fuente,
         }
 
-    # ============================================================
-    # FALLBACK
-    # ============================================================
+    except Exception as e:
+        print("ERROR EN /query:", e)
+        return {
+            "respuesta": "Ocurrió un error procesando la consulta.",
+            "voz": "Ocurrió un error procesando la consulta.",
+            "error": str(e),
+        }
 
-    respuesta = "Tengo información, pero no pude interpretarla correctamente."
-    return {
-        "respuesta": respuesta,
-        "voz": respuesta,
-        "fuente": fuente
-    }
+# ============================================================
+# ENDPOINT DE PRUEBA
+# ============================================================
+
+@app.get("/")
+async def root():
+    return {"status": "OK", "message": "Stock IA Backend funcionando."}
