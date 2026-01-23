@@ -165,6 +165,10 @@ def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
         df.columns = [f"col_{i}" for i in range(len(df.columns))]
 
     df = df.reset_index(drop=True)
+
+    # PRINT DE COLUMNAS DETECTADAS (lo que pediste)
+    print("COLUMNAS DETECTADAS:", df.columns.tolist())
+
     return df
 
 # ============================================================
