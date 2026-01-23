@@ -23,9 +23,9 @@ CACHE_ARCHIVO_META: Optional[Dict[str, Any]] = None
 STOPWORDS = {
     "que", "hay", "tengo", "quiero", "busco", "de", "para", "el", "la",
     "los", "las", "un", "una", "unos", "unas", "me", "por", "en", "del",
-    "al", "cuanto", "cuantos", "cuantas", "cual", "cuales", "hay",
-    "dime", "decime", "mostrame", "mostra", "mostrame", "mostrame",
-    "tenemos", "hay", "stock", "ver", "lista", "mostrar"
+    "al", "cuanto", "cuantos", "cuantas", "cual", "cuales",
+    "dime", "decime", "mostrame", "mostra",
+    "tenemos", "stock", "ver", "lista", "mostrar"
 }
 
 def normalizar_texto(s: str) -> str:
@@ -246,36 +246,36 @@ def buscar_por_descripcion(df, col_desc, pregunta):
 # AGRUPACIÓN POR MODELO
 # ============================================================
 
-def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca=None, col_rubro=None, col_precio=None, col_color=None):
+def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca=None, col_rubro=None, col_precio=None, col_color=None, col_codigo=None):
     grupos = []
 
     for desc, grupo in df.groupby(col_desc):
         talles = []
         if col_talle:
-            talles = []
             for t, g_t in grupo.groupby(col_talle):
                 stock_t = int(sum(parse_numero(v) for v in g_t[col_stock])) if col_stock else 0
                 talles.append({"talle": str(t).strip(), "stock": stock_t})
             talles = sorted(talles, key=lambda x: x["talle"])
 
         stock_total = int(sum(parse_numero(v) for v in grupo[col_stock])) if col_stock else None
+
         precio = None
         if col_precio:
-            # asumimos mismo precio en todas las filas del modelo
             precio = parse_numero(grupo[col_precio].iloc[0])
 
         valorizado_total = None
-        if col_precio and col_stock:
-            valorizado_total = int(stock_total * precio) if stock_total is not None else None
+        if col_precio and col_stock and stock_total is not None:
+            valorizado_total = int(stock_total * precio)
 
         marca = grupo[col_marca].iloc[0] if col_marca else ""
         rubro = grupo[col_rubro].iloc[0] if col_rubro else ""
         color = grupo[col_color].iloc[0] if col_color else ""
+        codigo = grupo[col_codigo].iloc[0] if col_codigo else ""
 
         grupos.append({
             "tipo": "producto",
             "descripcion": normalizar_descripcion(desc),
-            "codigo": str(grupo.iloc[0].get("codigo", "")),
+            "codigo": str(codigo),
             "marca": marca,
             "rubro": rubro,
             "precio": precio,
@@ -289,7 +289,7 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca=None, col_r
     return sorted(grupos, key=lambda x: x["stock_total"] or 0, reverse=True)
 
 # ============================================================
-# INTERPRETACIÓN DE LA PREGUNTA (RUBRO, MARCA, TALLE, VALORIZADO, CANTIDAD)
+# INTERPRETACIÓN DE LA PREGUNTA
 # ============================================================
 
 def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, str]) -> Dict[str, Any]:
@@ -315,7 +315,6 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
         pedir_cantidad = True
 
     # Detectar talle
-    # patrones tipo "talle 35" o "35" o "27/8"
     m_talle = re.search(r"talle\s+(\d{1,2}(?:/\d{1,2})?)", q_norm)
     if m_talle:
         talle_detectado = m_talle.group(1)
@@ -324,7 +323,7 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
         if m_talle2:
             talle_detectado = m_talle2.group(1)
 
-    # Detectar rubro y marca por matching con valores del Excel
+    # Detectar rubro por contenido del Excel
     if col_rubro:
         rubros_unicos = df[col_rubro].dropna().unique().tolist()
         rubros_norm = {normalizar_texto(r): r for r in rubros_unicos}
@@ -332,7 +331,6 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
             if t in rubros_norm:
                 rubro_detectado = rubros_norm[t]
                 break
-            # también por "contiene"
             for rn, r_orig in rubros_norm.items():
                 if t in rn and len(t) > 3:
                     rubro_detectado = r_orig
@@ -340,9 +338,10 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
             if rubro_detectado:
                 break
 
+    # Detectar marca por contenido del Excel (FIX: nombres consistentes)
     if col_marca:
         marcas_unicas = df[col_marca].dropna().unique().tolist()
-        marcas_norm = {normalizar_texto(m): m for m in marcas_unicos}
+        marcas_norm = {normalizar_texto(m): m for m in marcas_unicas}
         for t in tokens:
             if t in marcas_norm:
                 marca_detectada = marcas_norm[t]
@@ -467,16 +466,17 @@ def buscar_articulo_en_archivos(pregunta: str):
     col_color = columnas.get("color")
     col_marca = columnas.get("marca")
     col_rubro = columnas.get("rubro")
+    col_valorizado = columnas.get("valorizado")
 
     # Normalizar descripción principal
     if col_desc:
         col_desc = str(col_desc)
         df[col_desc] = df[col_desc].astype(str).apply(normalizar_descripcion)
 
-    # Interpretar la pregunta (rubro, marca, talle, valorizado, cantidad)
+    # Interpretar la pregunta
     contexto = interpretar_pregunta(pregunta, df, columnas)
 
-    # 1) Búsqueda por código (si hay código en la pregunta)
+    # 1) Búsqueda por código
     if col_codigo:
         tokens_cod = re.findall(r"[A-Za-z0-9\-]{2,}", pregunta)
         for t in tokens_cod:
@@ -504,7 +504,7 @@ def buscar_articulo_en_archivos(pregunta: str):
                 }
                 return info, archivo
 
-    # 2) Resúmenes por marca / rubro (valorizado / cantidad)
+    # 2) Resúmenes por marca / rubro
     if contexto["modo"] == "marca_resumen" and contexto["marca"]:
         resumen = resumen_por_marca(
             df, columnas,
@@ -537,7 +537,6 @@ def buscar_articulo_en_archivos(pregunta: str):
     if contexto["talle"] and col_talle:
         df_filtrado = df_filtrado[df_filtrado[col_talle].astype(str) == contexto["talle"]]
 
-    # Si hay filtros de marca/rubro/talle, agrupamos y devolvemos lista
     if contexto["modo"] in {"marca_listado", "rubro_listado", "talle_listado"}:
         if df_filtrado.empty or not col_desc:
             return None, archivo
@@ -549,11 +548,12 @@ def buscar_articulo_en_archivos(pregunta: str):
             col_marca,
             col_rubro,
             col_publico,
-            col_color
+            col_color,
+            col_codigo
         )
         return {"tipo": "lista", "lista_completa": grupos}, archivo
 
-    # 4) Búsqueda por descripción (consulta general)
+    # 4) Búsqueda por descripción
     if col_desc:
         encontrados = buscar_por_descripcion(df_filtrado, col_desc, pregunta)
         if not encontrados.empty:
@@ -565,7 +565,8 @@ def buscar_articulo_en_archivos(pregunta: str):
                 col_marca,
                 col_rubro,
                 col_publico,
-                col_color
+                col_color,
+                col_codigo
             )
             return {"tipo": "lista", "lista_completa": grupos}, archivo
 
