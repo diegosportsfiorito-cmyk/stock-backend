@@ -1,426 +1,238 @@
-import io
-import re
-from typing import Dict, Tuple, Any, Optional
+# ===== INICIO BLOQUE 1 — IMPORTS + UTILIDADES + DETECCIÓN DE COLUMNAS =====
+
 import pandas as pd
+import re
 
-from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
-
-CARPETA_STOCK_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
-
-# ============================================================
-# CACHÉ
-# ============================================================
-
-CACHE_DF: Optional[pd.DataFrame] = None
-CACHE_ARCHIVO_ID: Optional[str] = None
-CACHE_MODTIME: Optional[str] = None
-CACHE_ARCHIVO_META: Optional[Dict[str, Any]] = None
-
-# ============================================================
-# NORMALIZACIÓN Y STOPWORDS
-# ============================================================
-
-STOPWORDS = {
-    "que", "hay", "tengo", "quiero", "busco", "de", "para", "el", "la",
-    "los", "las", "un", "una", "unos", "unas", "me", "por", "en", "del",
-    "al", "cuanto", "cuantos", "cuantas", "cual", "cuales",
-    "dime", "decime", "mostrame", "mostra",
-    "tenemos", "stock", "ver", "lista", "mostrar",
-    "codigo", "modelo", "articulo"
-}
-
-def normalizar_texto(s: str) -> str:
-    if not isinstance(s, str):
-        return ""
-    s = s.strip().lower()
-    s = s.replace("á", "a").replace("é", "e").replace("í", "i")
-    s = s.replace("ó", "o").replace("ú", "u").replace("ñ", "n")
-    s = re.sub(r"[^a-z0-9/ .-]", "", s)
-    s = " ".join(s.split())
-    return s
+def normalizar(texto):
+    if not isinstance(texto, str):
+        texto = str(texto)
+    return texto.strip().lower()
 
 def parse_numero(valor):
-    if valor is None:
-        return 0.0
-    s = str(valor).strip()
-    if s == "":
-        return 0.0
-    s = s.replace(" ", "")
-    s = s.replace(".", "").replace(",", ".")
+    if pd.isna(valor):
+        return 0
+    if isinstance(valor, (int, float)):
+        return valor
+    v = str(valor).replace(".", "").replace(",", ".")
     try:
-        return float(s)
+        return float(v)
     except:
-        return 0.0
+        return 0
 
-def normalizar_descripcion(valor: str) -> str:
-    if not isinstance(valor, str):
-        return ""
-    return " ".join(valor.strip().split()).title()
+# ===== DETECCIÓN INTELIGENTE DE COLUMNA DESCRIPCIÓN =====
 
-# ============================================================
-# LECTURA DEL EXCEL
-# ============================================================
+def detectar_columna_descripcion(df):
+    """
+    Detecta la columna correcta de descripción aunque:
+    - haya varias columnas llamadas 'Descripción'
+    - cambie el orden
+    - cambien los nombres
+    - haya columnas vacías
+    """
 
-def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
-    excel_file = io.BytesIO(file_bytes)
-    xls = pd.ExcelFile(excel_file)
-
-    df_total = []
-
-    for sheet in xls.sheet_names:
-        df = xls.parse(sheet, header=0, dtype=str).fillna("")
-        df_total.append(df)
-
-    if not df_total:
-        return pd.DataFrame()
-
-    df = pd.concat(df_total, ignore_index=True)
-    df = df.dropna(how="all")
-
-    # Normalizar nombres de columnas
-    cols_norm = []
-    for c in df.columns:
-        c_norm = normalizar_texto(str(c))
-        cols_norm.append(c_norm)
-    df.columns = cols_norm
-
-    print("COLUMNAS DETECTADAS:", df.columns.tolist())
-
-    return df
-
-# ============================================================
-# DETECCIÓN DE COLUMNAS
-# ============================================================
-
-def detectar_columnas_por_contenido(df: pd.DataFrame) -> Dict[str, str]:
-    columnas = {}
-
-    desc_cols = [c for c in df.columns if "descripcion" in c]
-
-    rubro_col = None
-    marca_col = None
-    desc_principal_col = None
-
-    if len(desc_cols) >= 3:
-        rubro_col = desc_cols[0]
-        marca_col = desc_cols[1]
-        desc_principal_col = desc_cols[2]
-    elif len(desc_cols) == 2:
-        rubro_col = desc_cols[0]
-        marca_col = desc_cols[1]
-    elif len(desc_cols) == 1:
-        desc_principal_col = desc_cols[0]
-
-    if len(desc_cols) >= 3:
-        max_len = -1
-        best_col = desc_principal_col
-        for c in desc_cols:
-            textos = df[c].astype(str)
-            longitudes = textos.apply(lambda x: len(x.strip()))
-            prom = longitudes.mean()
-            if prom > max_len:
-                max_len = prom
-                best_col = c
-        desc_principal_col = best_col
-
-    if rubro_col:
-        columnas["rubro"] = rubro_col
-    if marca_col:
-        columnas["marca"] = marca_col
-    if desc_principal_col:
-        columnas["descripcion"] = desc_principal_col
-
-    for c in df.columns:
-        if "articulo" in c or "codigo" in c:
-            columnas["codigo"] = c
-            break
-
-    for c in df.columns:
-        if "talle" in c:
-            columnas["talle"] = c
-            break
-
-    for c in df.columns:
-        if "cantidad" in c or "stock" in c:
-            columnas["stock"] = c
-            break
-
-    for c in df.columns:
-        if "lista1" in c:
-            columnas["precio_publico"] = c
-            break
-
-    for c in df.columns:
-        if "valorizado" in c:
-            columnas["valorizado"] = c
-            break
-
-    for c in df.columns:
-        if "color" in c:
-            columnas["color"] = c
-            break
-
-    return columnas
-
-# ============================================================
-# CARGA CON CACHÉ
-# ============================================================
-
-def obtener_ultimo_excel_con_cache():
-    global CACHE_DF, CACHE_ARCHIVO_ID, CACHE_MODTIME, CACHE_ARCHIVO_META
-
-    archivos = listar_archivos_en_carpeta(CARPETA_STOCK_ID)
-    archivos = sorted(archivos, key=lambda a: a.get("modifiedTime", ""), reverse=True)
-
-    for archivo in archivos:
-        nombre = archivo["name"]
-        file_id = archivo["id"]
-        mod_time = archivo.get("modifiedTime")
-
-        if not nombre.lower().endswith(".xlsx"):
-            continue
-
-        if CACHE_DF is not None and CACHE_ARCHIVO_ID == file_id and CACHE_MODTIME == mod_time:
-            return CACHE_DF, CACHE_ARCHIVO_META
-
-        try:
-            file_bytes = descargar_archivo_por_id(file_id)
-            df = cargar_excel_inteligente(file_bytes)
-
-            CACHE_DF = df
-            CACHE_ARCHIVO_ID = file_id
-            CACHE_MODTIME = mod_time
-            CACHE_ARCHIVO_META = archivo
-
-            return df, archivo
-
-        except Exception as e:
-            print(f"ERROR cargando archivo {nombre}: {e}")
-            continue
-
-    return None, None
-
-# ============================================================
-# BÚSQUEDA POR DESCRIPCIÓN
-# ============================================================
-
-def buscar_por_descripcion(df, col_desc, pregunta):
-    tokens = [
-        t for t in normalizar_texto(pregunta).split()
-        if t not in STOPWORDS and len(t) > 2
+    keywords = [
+        "pantufla", "pantuflas", "pantu",
+        "zapatilla", "zapatillas", "zapa",
+        "remera", "camiseta",
+        "buzo", "campera",
+        "pantalon", "pantalón",
+        "short",
+        "botin", "botines",
+        "media", "medias",
+        "guante", "guantes",
+        "bolsa", "boxeo",
+        "mochila",
+        "plush",
+        "avengers", "marvel"
     ]
 
-    if not tokens:
-        return pd.DataFrame()
+    columnas_prohibidas = ["rubro", "marca", "color", "talle", "cantidad", "stock", "precio"]
 
-    desc = df[col_desc].astype(str).str.lower()
+    cols_norm = {c: c.lower().strip() for c in df.columns}
 
-    mask = False
-    for t in tokens:
-        mask = mask | desc.str.contains(t, na=False)
+    puntajes = {}
 
-    resultados = df[mask].copy()
-    if resultados.empty:
-        return resultados
+    for col in df.columns:
+        nombre = cols_norm[col]
 
-    resultados["score"] = resultados[col_desc].str.lower().apply(
-        lambda x: sum(t in x for t in tokens)
-    )
+        if any(p in nombre for p in columnas_prohibidas):
+            continue
 
-    return resultados.sort_values("score", ascending=False)
+        puntaje = 0
+        serie = df[col].astype(str).str.lower()
 
-# ============================================================
-# ORDEN DE TALLES (FIX DEFINITIVO)
-# ============================================================
+        for kw in keywords:
+            puntaje += serie.str.contains(kw, na=False).sum()
 
-def _orden_talle(talle_str: str):
-    s = str(talle_str).strip().lower()
+        puntajes[col] = puntaje
 
-    if "/" in s:
-        try:
-            return float(s.split("/")[0])
-        except:
-            return 9999
+    if puntajes and max(puntajes.values()) > 0:
+        return max(puntajes, key=puntajes.get)
 
+    mejor_col = None
+    mejor_score = -1
+
+    for col in df.columns:
+        nombre = cols_norm[col]
+
+        if any(p in nombre for p in columnas_prohibidas):
+            continue
+
+        serie = df[col].astype(str)
+        score = serie.str.len().mean() + serie.replace("", None).count()
+
+        if score > mejor_score:
+            mejor_score = score
+            mejor_col = col
+
+    return mejor_col
+
+# ===== FIN BLOQUE 1 =====
+# ===== INICIO BLOQUE 2 — AGRUPACIÓN, BÚSQUEDAS, RESÚMENES =====
+
+def _orden_talle(t):
     try:
-        return float(s)
+        return int(re.sub(r"\D", "", str(t)))
     except:
-        pass
+        return 9999
 
-    orden_texto = {
-        "xs": 10001,
-        "s": 10002,
-        "m": 10003,
-        "l": 10004,
-        "xl": 10005,
-        "xxl": 10006,
-        "unico": 10007,
-    }
-
-    return orden_texto.get(s, 10050)
-
-# ============================================================
-# AGRUPACIÓN POR MODELO
-# ============================================================
-
-def agrupar_por_modelo(
-    df,
-    col_desc,
-    col_talle,
-    col_stock,
-    col_marca=None,
-    col_rubro=None,
-    col_precio=None,
-    col_color=None,
-    col_codigo=None
-):
-    if col_talle:
-        df[col_talle] = df[col_talle].astype(str).str.strip()
-
+def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca, col_rubro, col_publico, col_color, col_codigo):
     grupos = []
-
-    for desc, grupo in df.groupby(col_desc):
+    for desc, g in df.groupby(col_desc):
         talles = []
-        if col_talle:
-            for t, g_t in grupo.groupby(col_talle):
-                stock_t = int(sum(parse_numero(v) for v in g_t[col_stock])) if col_stock else 0
-                talles.append({"talle": str(t).strip(), "stock": stock_t})
-            talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
-
-        stock_total = int(sum(parse_numero(v) for v in grupo[col_stock])) if col_stock else None
-
-        precio = None
-        if col_precio:
-            precio = parse_numero(grupo[col_precio].iloc[0])
-
-        valorizado_total = None
-        if col_precio and col_stock and stock_total is not None:
-            valorizado_total = int(stock_total * precio)
-
-        marca = grupo[col_marca].iloc[0] if col_marca else ""
-        rubro = grupo[col_rubro].iloc[0] if col_rubro else ""
-        color = grupo[col_color].iloc[0] if col_color else ""
-        codigo = grupo[col_codigo].iloc[0] if col_codigo else ""
+        if col_talle and col_stock:
+            for tl, gg in g.groupby(col_talle):
+                stock_t = int(sum(parse_numero(v) for v in gg[col_stock]))
+                talles.append({"talle": str(tl).strip(), "stock": stock_t})
 
         grupos.append({
-            "tipo": "producto",
-            "descripcion": normalizar_descripcion(desc),
-            "codigo": str(codigo),
-            "marca": marca,
-            "rubro": rubro,
-            "precio": precio,
-            "stock_total": stock_total,
-            "talles": talles,
-            "valorizado_total": valorizado_total,
-            "color": color,
-            "items": grupo.to_dict(orient="records")
+            "descripcion": desc,
+            "marca": g[col_marca].iloc[0] if col_marca else "",
+            "rubro": g[col_rubro].iloc[0] if col_rubro else "",
+            "precio": parse_numero(g[col_publico].iloc[0]) if col_publico else None,
+            "talles": sorted(talles, key=lambda x: _orden_talle(x["talle"])),
+            "codigo": g[col_codigo].iloc[0] if col_codigo else "",
+            "color": g[col_color].iloc[0] if col_color else ""
         })
 
-    return sorted(grupos, key=lambda x: x["stock_total"] or 0, reverse=True)
-                    if col_talle:
-                    df_art[col_talle] = df_art[col_talle].astype(str).str.strip()
+    return grupos
 
-                stock_total = int(sum(parse_numero(v) for v in df_art[col_stock])) if col_stock else None
+def buscar_por_descripcion(df, col_desc, texto):
+    t = normalizar(texto)
+    return df[df[col_desc].astype(str).str.lower().str.contains(t)]
 
-                talles = []
-                if col_talle and col_stock:
-                    for tl, g in df_art.groupby(col_talle):
-                        stock_t = int(sum(parse_numero(v) for v in g[col_stock]))
-                        talles.append({"talle": str(tl).strip(), "stock": stock_t})
-                    talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
+def resumen_por_marca(df, columnas, marca, pedir_valorizado, pedir_cantidad):
+    col_marca = columnas.get("marca")
+    col_stock = columnas.get("stock")
+    col_val = columnas.get("valorizado")
 
-                info = {
-                    "tipo": "producto",
-                    "codigo": t.upper(),
-                    "descripcion": fila[col_desc] if col_desc else "",
-                    "precio": parse_numero(fila[col_publico]) if col_publico else None,
-                    "stock_total": stock_total,
-                    "talles": talles,
-                    "marca": fila[col_marca] if col_marca else "",
-                    "rubro": fila[col_rubro] if col_rubro else "",
-                    "color": fila[col_color] if col_color else "",
-                }
-                return info, archivo
+    if not col_marca:
+        return None
 
-    # ============================================================
-    # RESÚMENES POR MARCA / RUBRO
-    # ============================================================
+    df_m = df[df[col_marca].astype(str).str.lower() == marca.lower()]
+    if df_m.empty:
+        return None
 
-    if contexto["modo"] == "marca_resumen" and contexto["marca"]:
-        resumen = resumen_por_marca(
-            df, columnas,
-            contexto["marca"],
-            contexto["pedir_valorizado"],
-            contexto["pedir_cantidad"]
-        )
-        if resumen:
-            return resumen, archivo
+    total_stock = df_m[col_stock].apply(parse_numero).sum() if pedir_cantidad else None
+    total_val = df_m[col_val].apply(parse_numero).sum() if pedir_valorizado else None
 
-    if contexto["modo"] == "rubro_resumen" and contexto["rubro"]:
-        resumen = resumen_por_rubro(
-            df, columnas,
-            contexto["rubro"],
-            contexto["pedir_valorizado"],
-            contexto["pedir_cantidad"]
-        )
-        if resumen:
-            return resumen, archivo
+    return {
+        "tipo": "resumen_marca",
+        "marca": marca,
+        "cantidad_total": total_stock,
+        "valorizado_total": total_val
+    }
 
-    # ============================================================
-    # LISTADOS POR MARCA / RUBRO / TALLE
-    # ============================================================
+def resumen_por_rubro(df, columnas, rubro, pedir_valorizado, pedir_cantidad):
+    col_rubro = columnas.get("rubro")
+    col_stock = columnas.get("stock")
+    col_val = columnas.get("valorizado")
 
-    df_filtrado = df.copy()
+    if not col_rubro:
+        return None
 
-    if contexto["marca"] and col_marca:
-        df_filtrado = df_filtrado[df_filtrado[col_marca] == contexto["marca"]]
+    df_r = df[df[col_rubro].astype(str).str.lower() == rubro.lower()]
+    if df_r.empty:
+        return None
 
-    if contexto["rubro"] and col_rubro:
-        df_filtrado = df_filtrado[df_filtrado[col_rubro] == contexto["rubro"]]
+    total_stock = df_r[col_stock].apply(parse_numero).sum() if pedir_cantidad else None
+    total_val = df_r[col_val].apply(parse_numero).sum() if pedir_valorizado else None
 
-    if contexto["talle"] and col_talle:
-        df_filtrado[col_talle] = df_filtrado[col_talle].astype(str).str.strip()
-        df_filtrado = df_filtrado[df_filtrado[col_talle] == contexto["talle"]]
+    return {
+        "tipo": "resumen_rubro",
+        "rubro": rubro,
+        "cantidad_total": total_stock,
+        "valorizado_total": total_val
+    }
 
-    if contexto["modo"] in {"marca_listado", "rubro_listado", "talle_listado"}:
-        if df_filtrado.empty or not col_desc:
-            return None, archivo
+# ===== FIN BLOQUE 2 =====
+# ===== INICIO BLOQUE 3 — FUNCIÓN PRINCIPAL procesar_pregunta =====
 
+def procesar_pregunta(df, pregunta):
+    pregunta_norm = normalizar(pregunta)
+
+    columnas = {
+        "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
+        "marca": next((c for c in df.columns if "marca" in c.lower()), None),
+        "codigo": next((c for c in df.columns if "art" in c.lower() or "codigo" in c.lower()), None),
+        "color": next((c for c in df.columns if "color" in c.lower()), None),
+        "talle": next((c for c in df.columns if "talle" in c.lower()), None),
+        "stock": next((c for c in df.columns if "cant" in c.lower() or "stock" in c.lower()), None),
+        "publico": next((c for c in df.columns if "lista" in c.lower() or "precio" in c.lower()), None),
+        "valorizado": next((c for c in df.columns if "valoriz" in c.lower()), None),
+    }
+
+    col_desc = detectar_columna_descripcion(df)
+    columnas["descripcion"] = col_desc
+
+    # Búsqueda por código exacto
+    col_codigo = columnas["codigo"]
+    if col_codigo:
+        df[col_codigo] = df[col_codigo].astype(str).str.strip()
+        if pregunta_norm.upper() in df[col_codigo].values:
+            fila = df[df[col_codigo] == pregunta_norm.upper()].iloc[0]
+            return {
+                "tipo": "producto",
+                "data": {
+                    "descripcion": fila[col_desc],
+                    "marca": fila[columnas["marca"]],
+                    "rubro": fila[columnas["rubro"]],
+                    "precio": parse_numero(fila[columnas["publico"]]),
+                    "stock_total": parse_numero(fila[columnas["stock"]]),
+                    "talles": [],
+                    "color": fila[columnas["color"]],
+                    "codigo": fila[col_codigo]
+                },
+                "voz": f"Encontré el artículo {fila[col_desc]}",
+                "fuente": {}
+            }
+
+    # Búsqueda por descripción
+    encontrados = buscar_por_descripcion(df, col_desc, pregunta_norm)
+    if not encontrados.empty:
         grupos = agrupar_por_modelo(
-            df_filtrado,
+            encontrados,
             col_desc,
-            col_talle,
-            col_stock,
-            col_marca,
-            col_rubro,
-            col_publico,
-            col_color,
-            col_codigo
+            columnas["talle"],
+            columnas["stock"],
+            columnas["marca"],
+            columnas["rubro"],
+            columnas["publico"],
+            columnas["color"],
+            columnas["codigo"]
         )
-        return {"tipo": "lista", "items": grupos}, archivo
+        return {
+            "tipo": "lista",
+            "items": grupos,
+            "voz": f"Encontré {len(grupos)} modelos relacionados.",
+            "fuente": {}
+        }
 
-    # ============================================================
-    # BÚSQUEDA POR DESCRIPCIÓN
-    # ============================================================
+    return {
+        "tipo": "lista",
+        "items": [],
+        "voz": "No encontré resultados para tu búsqueda.",
+        "fuente": {}
+    }
 
-    if col_desc:
-        encontrados = buscar_por_descripcion(df_filtrado, col_desc, pregunta)
-        if not encontrados.empty:
-            grupos = agrupar_por_modelo(
-                encontrados,
-                col_desc,
-                col_talle,
-                col_stock,
-                col_marca,
-                col_rubro,
-                col_publico,
-                col_color,
-                col_codigo
-            )
-            return {"tipo": "lista", "items": grupos}, archivo
-
-    # ============================================================
-    # SIN RESULTADOS
-    # ============================================================
-
-    return None, archivo
+# ===== FIN BLOQUE 3 =====
