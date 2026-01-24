@@ -1,7 +1,11 @@
-# ===== INICIO BLOQUE 1 — IMPORTS + UTILIDADES + DETECCIÓN DE COLUMNAS =====
+# ===== INICIO INDEXER COMPLETO =====
 
 import pandas as pd
 import re
+
+# ------------------------------------------------------------
+# NORMALIZACIÓN Y UTILIDADES
+# ------------------------------------------------------------
 
 def normalizar(texto):
     if not isinstance(texto, str):
@@ -19,7 +23,9 @@ def parse_numero(valor):
     except:
         return 0
 
-# ===== DETECCIÓN INTELIGENTE DE COLUMNA DESCRIPCIÓN =====
+# ------------------------------------------------------------
+# DETECCIÓN INTELIGENTE DE COLUMNA DESCRIPCIÓN
+# ------------------------------------------------------------
 
 def detectar_columna_descripcion(df):
     """
@@ -55,20 +61,28 @@ def detectar_columna_descripcion(df):
     for col in df.columns:
         nombre = cols_norm[col]
 
+        # descartar columnas prohibidas
         if any(p in nombre for p in columnas_prohibidas):
             continue
 
-        puntaje = 0
         serie = df[col].astype(str).str.lower()
+
+        # descartar columnas vacías
+        if serie.replace("", None).count() == 0:
+            continue
+
+        puntaje = 0
 
         for kw in keywords:
             puntaje += serie.str.contains(kw, na=False).sum()
 
         puntajes[col] = puntaje
 
+    # Si alguna columna tiene coincidencias → esa es la descripción
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
+    # Fallback: elegir la columna con más texto útil
     mejor_col = None
     mejor_score = -1
 
@@ -79,7 +93,7 @@ def detectar_columna_descripcion(df):
             continue
 
         serie = df[col].astype(str)
-        score = serie.str.len().mean() + serie.replace("", None).count()
+        score = serie.str.len().mean()
 
         if score > mejor_score:
             mejor_score = score
@@ -87,8 +101,9 @@ def detectar_columna_descripcion(df):
 
     return mejor_col
 
-# ===== FIN BLOQUE 1 =====
-# ===== INICIO BLOQUE 2 — AGRUPACIÓN, BÚSQUEDAS, RESÚMENES =====
+# ------------------------------------------------------------
+# AGRUPACIÓN Y BÚSQUEDAS
+# ------------------------------------------------------------
 
 def _orden_talle(t):
     try:
@@ -121,52 +136,9 @@ def buscar_por_descripcion(df, col_desc, texto):
     t = normalizar(texto)
     return df[df[col_desc].astype(str).str.lower().str.contains(t)]
 
-def resumen_por_marca(df, columnas, marca, pedir_valorizado, pedir_cantidad):
-    col_marca = columnas.get("marca")
-    col_stock = columnas.get("stock")
-    col_val = columnas.get("valorizado")
-
-    if not col_marca:
-        return None
-
-    df_m = df[df[col_marca].astype(str).str.lower() == marca.lower()]
-    if df_m.empty:
-        return None
-
-    total_stock = df_m[col_stock].apply(parse_numero).sum() if pedir_cantidad else None
-    total_val = df_m[col_val].apply(parse_numero).sum() if pedir_valorizado else None
-
-    return {
-        "tipo": "resumen_marca",
-        "marca": marca,
-        "cantidad_total": total_stock,
-        "valorizado_total": total_val
-    }
-
-def resumen_por_rubro(df, columnas, rubro, pedir_valorizado, pedir_cantidad):
-    col_rubro = columnas.get("rubro")
-    col_stock = columnas.get("stock")
-    col_val = columnas.get("valorizado")
-
-    if not col_rubro:
-        return None
-
-    df_r = df[df[col_rubro].astype(str).str.lower() == rubro.lower()]
-    if df_r.empty:
-        return None
-
-    total_stock = df_r[col_stock].apply(parse_numero).sum() if pedir_cantidad else None
-    total_val = df_r[col_val].apply(parse_numero).sum() if pedir_valorizado else None
-
-    return {
-        "tipo": "resumen_rubro",
-        "rubro": rubro,
-        "cantidad_total": total_stock,
-        "valorizado_total": total_val
-    }
-
-# ===== FIN BLOQUE 2 =====
-# ===== INICIO BLOQUE 3 — FUNCIÓN PRINCIPAL procesar_pregunta =====
+# ------------------------------------------------------------
+# PROCESAR PREGUNTA
+# ------------------------------------------------------------
 
 def procesar_pregunta(df, pregunta):
     pregunta_norm = normalizar(pregunta)
@@ -182,6 +154,7 @@ def procesar_pregunta(df, pregunta):
         "valorizado": next((c for c in df.columns if "valoriz" in c.lower()), None),
     }
 
+    # Detectar columna correcta de descripción
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
@@ -228,6 +201,7 @@ def procesar_pregunta(df, pregunta):
             "fuente": {}
         }
 
+    # Sin resultados
     return {
         "tipo": "lista",
         "items": [],
@@ -235,4 +209,4 @@ def procesar_pregunta(df, pregunta):
         "fuente": {}
     }
 
-# ===== FIN BLOQUE 3 =====
+# ===== FIN INDEXER COMPLETO =====
