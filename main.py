@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from indexer import buscar_articulo_en_archivos
@@ -22,7 +22,7 @@ app.add_middleware(
 # ============================================================
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str   # <-- ahora coincide con el frontend
 
 # ============================================================
 # ENDPOINT PRINCIPAL
@@ -35,23 +35,22 @@ async def query(req: QueryRequest):
     try:
         info, fuente = buscar_articulo_en_archivos(pregunta)
 
+        # ============================================================
+        # SIN RESULTADOS
+        # ============================================================
         if info is None:
             return {
-                "respuesta": "No encontré artículos relacionados con tu consulta.",
+                "tipo": "mensaje",
+                "mensaje": "No encontré artículos relacionados con tu consulta.",
                 "voz": "No encontré artículos relacionados con tu consulta.",
                 "fuente": fuente,
             }
 
         # ============================================================
-        # FORMATEO DE RESPUESTA PARA EL FRONTEND
+        # PRODUCTO INDIVIDUAL
         # ============================================================
-
-        # 1) Producto individual
         if info.get("tipo") == "producto":
             descripcion = info.get("descripcion", "")
-            codigo = info.get("codigo", "")
-            marca = info.get("marca", "")
-            rubro = info.get("rubro", "")
             stock_total = info.get("stock_total", 0)
             precio = info.get("precio", None)
 
@@ -66,7 +65,9 @@ async def query(req: QueryRequest):
                 "fuente": fuente,
             }
 
-        # 2) Lista de productos (marca, rubro, talle o búsqueda general)
+        # ============================================================
+        # LISTA DE PRODUCTOS
+        # ============================================================
         if info.get("tipo") == "lista":
             lista = info.get("lista_completa", [])
             cantidad = len(lista)
@@ -76,12 +77,14 @@ async def query(req: QueryRequest):
             return {
                 "tipo": "lista",
                 "cantidad": cantidad,
-                "lista": lista,
+                "items": lista,   # <-- corregido para coincidir con el frontend
                 "voz": voz,
                 "fuente": fuente,
             }
 
-        # 3) Resumen por marca
+        # ============================================================
+        # RESUMEN POR MARCA
+        # ============================================================
         if info.get("tipo") == "marca_resumen":
             marca = info.get("marca", "")
             stock_total = info.get("stock_total", 0)
@@ -98,7 +101,9 @@ async def query(req: QueryRequest):
                 "fuente": fuente,
             }
 
-        # 4) Resumen por rubro
+        # ============================================================
+        # RESUMEN POR RUBRO
+        # ============================================================
         if info.get("tipo") == "rubro_resumen":
             rubro = info.get("rubro", "")
             stock_total = info.get("stock_total", 0)
@@ -115,9 +120,12 @@ async def query(req: QueryRequest):
                 "fuente": fuente,
             }
 
-        # Fallback
+        # ============================================================
+        # FALLBACK
+        # ============================================================
         return {
-            "respuesta": "No pude interpretar la consulta.",
+            "tipo": "mensaje",
+            "mensaje": "No pude interpretar la consulta.",
             "voz": "No pude interpretar la consulta.",
             "fuente": fuente,
         }
@@ -125,7 +133,8 @@ async def query(req: QueryRequest):
     except Exception as e:
         print("ERROR EN /query:", e)
         return {
-            "respuesta": "Ocurrió un error procesando la consulta.",
+            "tipo": "mensaje",
+            "mensaje": "Ocurrió un error procesando la consulta.",
             "voz": "Ocurrió un error procesando la consulta.",
             "error": str(e),
         }
