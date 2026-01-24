@@ -25,7 +25,8 @@ STOPWORDS = {
     "los", "las", "un", "una", "unos", "unas", "me", "por", "en", "del",
     "al", "cuanto", "cuantos", "cuantas", "cual", "cuales",
     "dime", "decime", "mostrame", "mostra",
-    "tenemos", "stock", "ver", "lista", "mostrar"
+    "tenemos", "stock", "ver", "lista", "mostrar",
+    "codigo", "modelo", "articulo"
 }
 
 def normalizar_texto(s: str) -> str:
@@ -35,6 +36,7 @@ def normalizar_texto(s: str) -> str:
     s = s.replace("á", "a").replace("é", "e").replace("í", "i")
     s = s.replace("ó", "o").replace("ú", "u").replace("ñ", "n")
     s = re.sub(r"[^a-z0-9/ .-]", "", s)
+    s = " ".join(s.split())
     return s
 
 def parse_numero(valor):
@@ -43,6 +45,7 @@ def parse_numero(valor):
     s = str(valor).strip()
     if s == "":
         return 0.0
+    s = s.replace(" ", "")
     s = s.replace(".", "").replace(",", ".")
     try:
         return float(s)
@@ -72,6 +75,7 @@ def cargar_excel_inteligente(file_bytes) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.concat(df_total, ignore_index=True)
+    df = df.dropna(how="all")
 
     # Normalizar nombres de columnas
     cols_norm = []
@@ -139,7 +143,7 @@ def detectar_columnas_por_contenido(df: pd.DataFrame) -> Dict[str, str]:
 
     # 2) Código (articulo)
     for c in df.columns:
-        if "articulo" in c:
+        if "articulo" in c or "codigo" in c:
             columnas["codigo"] = c
             break
 
@@ -246,7 +250,25 @@ def buscar_por_descripcion(df, col_desc, pregunta):
 # AGRUPACIÓN POR MODELO
 # ============================================================
 
-def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca=None, col_rubro=None, col_precio=None, col_color=None, col_codigo=None):
+def _orden_talle(talle_str: str):
+    s = str(talle_str).strip()
+    s_norm = s.replace("/", ".")
+    try:
+        return float(s_norm)
+    except:
+        return s
+
+def agrupar_por_modelo(
+    df,
+    col_desc,
+    col_talle,
+    col_stock,
+    col_marca=None,
+    col_rubro=None,
+    col_precio=None,
+    col_color=None,
+    col_codigo=None
+):
     grupos = []
 
     for desc, grupo in df.groupby(col_desc):
@@ -255,7 +277,7 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca=None, col_r
             for t, g_t in grupo.groupby(col_talle):
                 stock_t = int(sum(parse_numero(v) for v in g_t[col_stock])) if col_stock else 0
                 talles.append({"talle": str(t).strip(), "stock": stock_t})
-            talles = sorted(talles, key=lambda x: x["talle"])
+            talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
 
         stock_total = int(sum(parse_numero(v) for v in grupo[col_stock])) if col_stock else None
 
@@ -314,14 +336,10 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
     if any(w in q_norm for w in ["cantidad", "pares", "cuantos", "cuantas"]):
         pedir_cantidad = True
 
-    # Detectar talle
+    # Detectar talle SOLO si se menciona "talle"
     m_talle = re.search(r"talle\s+(\d{1,2}(?:/\d{1,2})?)", q_norm)
     if m_talle:
         talle_detectado = m_talle.group(1)
-    else:
-        m_talle2 = re.search(r"\b(\d{1,2}(?:/\d{1,2})?)\b", q_norm)
-        if m_talle2:
-            talle_detectado = m_talle2.group(1)
 
     # Detectar rubro por contenido del Excel
     if col_rubro:
@@ -338,7 +356,7 @@ def interpretar_pregunta(pregunta: str, df: pd.DataFrame, columnas: Dict[str, st
             if rubro_detectado:
                 break
 
-    # Detectar marca por contenido del Excel (FIX: nombres consistentes)
+    # Detectar marca por contenido del Excel
     if col_marca:
         marcas_unicas = df[col_marca].dropna().unique().tolist()
         marcas_norm = {normalizar_texto(m): m for m in marcas_unicas}
@@ -403,7 +421,7 @@ def resumen_por_marca(df, columnas, marca, pedir_valorizado, pedir_cantidad):
         for t, g in df_m.groupby(col_talle):
             stock_t = int(sum(parse_numero(v) for v in g[col_stock]))
             talles.append({"talle": str(t).strip(), "stock": stock_t})
-        talles = sorted(talles, key=lambda x: x["talle"])
+        talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
 
     return {
         "tipo": "marca_resumen",
@@ -437,7 +455,7 @@ def resumen_por_rubro(df, columnas, rubro, pedir_valorizado, pedir_cantidad):
         for t, g in df_r.groupby(col_talle):
             stock_t = int(sum(parse_numero(v) for v in g[col_stock]))
             talles.append({"talle": str(t).strip(), "stock": stock_t})
-        talles = sorted(talles, key=lambda x: x["talle"])
+        talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
 
     return {
         "tipo": "rubro_resumen",
@@ -476,9 +494,10 @@ def buscar_articulo_en_archivos(pregunta: str):
     # Interpretar la pregunta
     contexto = interpretar_pregunta(pregunta, df, columnas)
 
-    # 1) Búsqueda por código
+    # 1) Búsqueda por código (más estricta)
     if col_codigo:
-        tokens_cod = re.findall(r"[A-Za-z0-9\-]{2,}", pregunta)
+        # Ajustar regex según formato real de tus códigos
+        tokens_cod = re.findall(r"\b[A-Za-z0-9\-]{3,}\b", pregunta)
         for t in tokens_cod:
             df_art = df[df[col_codigo].astype(str).str.upper() == t.upper()]
             if not df_art.empty:
@@ -489,7 +508,7 @@ def buscar_articulo_en_archivos(pregunta: str):
                     for tl, g in df_art.groupby(col_talle):
                         stock_t = int(sum(parse_numero(v) for v in g[col_stock]))
                         talles.append({"talle": str(tl).strip(), "stock": stock_t})
-                    talles = sorted(talles, key=lambda x: x["talle"])
+                    talles = sorted(talles, key=lambda x: _orden_talle(x["talle"]))
 
                 info = {
                     "tipo": "producto",
@@ -551,7 +570,7 @@ def buscar_articulo_en_archivos(pregunta: str):
             col_color,
             col_codigo
         )
-        return {"tipo": "lista", "lista_completa": grupos}, archivo
+        return {"tipo": "lista", "items": grupos}, archivo
 
     # 4) Búsqueda por descripción
     if col_desc:
@@ -568,6 +587,6 @@ def buscar_articulo_en_archivos(pregunta: str):
                 col_color,
                 col_codigo
             )
-            return {"tipo": "lista", "lista_completa": grupos}, archivo
+            return {"tipo": "lista", "items": grupos}, archivo
 
     return None, archivo
