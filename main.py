@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from indexer import buscar_articulo_en_archivos
+from indexer import procesar_pregunta
 
 app = FastAPI()
 
@@ -146,3 +146,4 @@ async def query(req: QueryRequest):
 @app.get("/")
 async def root():
     return {"status": "OK", "message": "Stock IA Backend funcionando."}
+
