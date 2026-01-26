@@ -1,4 +1,4 @@
-# ===== INDEXER UNIVERSAL + AUTOCOMPLETADO =====
+# ===== INDEXER UNIVERSAL + AUTOCOMPLETADO + DECODIFICACIÓN DE CÓDIGO DE BARRAS =====
 
 import pandas as pd
 import re
@@ -200,27 +200,6 @@ def procesar_pregunta(df, pregunta):
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
-    # ===== DETECCIÓN INTELIGENTE DE MARCA Y RUBRO =====
-    if not columnas["marca"]:
-        posibles_marcas = ["adidas","nike","reebok","atomik","kioshi","prominent",
-                           "maraton","limited","authentic","puma","fila","topper"]
-        for col in df.columns:
-            if df[col].astype(str).str.lower().isin(posibles_marcas).any():
-                columnas["marca"] = col
-                break
-        if not columnas["marca"]:
-            columnas["marca"] = df.columns[0]
-
-    if not columnas["rubro"]:
-        posibles_rubros = ["ojotas","calzado","indumentaria","zapatilla","bermuda",
-                           "remera","buzo","campera","pantalon","pantalón","short"]
-        for col in df.columns:
-            if df[col].astype(str).str.lower().isin(posibles_rubros).any():
-                columnas["rubro"] = col
-                break
-        if not columnas["rubro"] and len(df.columns) > 1:
-            columnas["rubro"] = df.columns[1]
-
     # --------------------------------------------------------
     # AUTOCOMPLETADO
     # --------------------------------------------------------
@@ -231,6 +210,58 @@ def procesar_pregunta(df, pregunta):
             "tipo": "autocomplete",
             "sugerencias": sugerencias
         })
+
+    # --------------------------------------------------------
+    # DECODIFICACIÓN DE CÓDIGO DE BARRAS (ARTICULO / COLOR / TALLE)
+    # --------------------------------------------------------
+    if any(sep in pregunta_norm for sep in ["/", "!", "¡"]):
+        for sep in ["/", "!", "¡"]:
+            if sep in pregunta_norm:
+                partes = pregunta_norm.split(sep)
+                partes = [p.strip() for p in partes if p.strip()]
+                break
+
+        articulo = partes[0] if len(partes) >= 1 else None
+        extra = partes[1] if len(partes) >= 2 else None
+
+        # Buscar artículo por código EXACTO
+        if articulo and columnas["codigo"]:
+            df_art = df[df[columnas["codigo"]].astype(str).str.strip() == articulo]
+
+            if df_art.empty:
+                return limpiar_nan_en_objeto({
+                    "tipo": "lista",
+                    "items": [],
+                    "voz": "No encontré ese artículo.",
+                    "fuente": {}
+                })
+
+            # Si extra es un número → talle
+            if extra and extra.isdigit() and columnas["talle"]:
+                df_art = df_art[df_art[columnas["talle"]].astype(str).str.contains(extra)]
+
+            # Si extra es texto → color
+            elif extra and columnas["color"]:
+                df_art = df_art[df_art[columnas["color"]].astype(str).str.lower().str.contains(extra)]
+
+            grupos = agrupar_por_modelo(
+                df_art,
+                columnas["descripcion"],
+                columnas["talle"],
+                columnas["stock"],
+                columnas["marca"],
+                columnas["rubro"],
+                columnas["publico"],
+                columnas["color"],
+                columnas["codigo"]
+            )
+
+            return limpiar_nan_en_objeto({
+                "tipo": "lista",
+                "items": grupos,
+                "voz": "Código de barras interpretado correctamente.",
+                "fuente": {}
+            })
 
     # --------------------------------------------------------
     # BÚSQUEDA POR CÓDIGO EXACTO
