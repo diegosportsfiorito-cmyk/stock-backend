@@ -1,10 +1,10 @@
-# ===== INICIO INDEXER COMPLETO =====
+# ===== INDEXER UNIVERSAL COMPLETO =====
 
 import pandas as pd
 import re
 
 # ------------------------------------------------------------
-# NORMALIZACIÓN Y UTILIDADES
+# NORMALIZACIÓN
 # ------------------------------------------------------------
 
 def normalizar(texto):
@@ -24,96 +24,52 @@ def parse_numero(valor):
         return 0
 
 # ------------------------------------------------------------
-# EXTRAER KEYWORD DE LA PREGUNTA
+# EXTRAER KEYWORDS
 # ------------------------------------------------------------
 
-def extraer_keyword(pregunta):
+def extraer_keywords(pregunta):
     p = normalizar(pregunta)
-
-    stopwords = [
-        "que", "hay", "tengo", "de", "el", "la", "los", "las",
-        "un", "una", "hay", "stock", "cuanto", "cuántos"
-    ]
-
-    tokens = [t for t in re.split(r"\W+", p) if t and t not in stopwords]
-
-    if not tokens:
-        return p
-
-    # Si contiene "pantu", priorizarlo
-    for t in tokens:
-        if "pantu" in t:
-            return "pantu"
-
-    return tokens[0]
+    tokens = re.split(r"\W+", p)
+    stopwords = ["que","hay","tengo","de","el","la","los","las","un","una","stock","en","para","con"]
+    return [t for t in tokens if t and t not in stopwords]
 
 # ------------------------------------------------------------
-# DETECCIÓN INTELIGENTE DE COLUMNA DESCRIPCIÓN
+# DETECTAR COLUMNA DE DESCRIPCIÓN
 # ------------------------------------------------------------
 
 def detectar_columna_descripcion(df):
     keywords = [
-        "pantufla", "pantuflas", "pantu",
-        "zapatilla", "zapatillas", "zapa",
-        "remera", "camiseta",
-        "buzo", "campera",
-        "pantalon", "pantalón",
-        "short",
-        "botin", "botines",
-        "media", "medias",
-        "guante", "guantes",
-        "bolsa", "boxeo",
-        "mochila",
-        "plush",
-        "avengers", "marvel"
+        "pantufla","pantuflas","pantu",
+        "zapatilla","zapatillas","zapa",
+        "remera","camiseta","buzo","campera",
+        "pantalon","pantalón","short",
+        "botin","botines","media","medias",
+        "guante","guantes","bolsa","boxeo",
+        "mochila","plush","avengers","marvel"
     ]
 
-    columnas_prohibidas = ["rubro", "marca", "color", "talle", "cantidad", "stock", "precio"]
+    columnas_prohibidas = ["rubro","marca","color","talle","cantidad","stock","precio"]
 
     cols_norm = {c: c.lower().strip() for c in df.columns}
-
     puntajes = {}
 
     for col in df.columns:
         nombre = cols_norm[col]
-
         if any(p in nombre for p in columnas_prohibidas):
             continue
 
         serie = df[col].astype(str).str.lower()
-
-        if serie.replace("", None).count() == 0:
-            continue
-
-        puntaje = 0
-        for kw in keywords:
-            puntaje += serie.str.contains(kw, na=False).sum()
-
+        puntaje = sum(serie.str.contains(kw, na=False).sum() for kw in keywords)
         puntajes[col] = puntaje
 
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
-    mejor_col = None
-    mejor_score = -1
-
-    for col in df.columns:
-        nombre = cols_norm[col]
-
-        if any(p in nombre for p in columnas_prohibidas):
-            continue
-
-        serie = df[col].astype(str)
-        score = serie.str.len().mean()
-
-        if score > mejor_score:
-            mejor_score = score
-            mejor_col = col
-
-    return mejor_col
+    # fallback: columna con más texto
+    return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
 
 # ------------------------------------------------------------
-# AGRUPACIÓN Y BÚSQUEDAS
+# AGRUPACIÓN POR MODELO
 # ------------------------------------------------------------
 
 def _orden_talle(t):
@@ -144,9 +100,23 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca, col_rubro,
 
     return grupos
 
-def buscar_por_descripcion(df, col_desc, texto):
-    t = normalizar(texto)
-    return df[df[col_desc].astype(str).str.lower().str.contains(t)]
+# ------------------------------------------------------------
+# BÚSQUEDA UNIVERSAL
+# ------------------------------------------------------------
+
+def buscar_universal(df, keywords, columnas):
+    df_filtrado = df.copy()
+
+    for kw in keywords:
+        mask = False
+
+        for col in columnas.values():
+            if col:
+                mask = mask | df[col].astype(str).str.lower().str.contains(kw)
+
+        df_filtrado = df_filtrado[mask]
+
+    return df_filtrado
 
 # ------------------------------------------------------------
 # PROCESAR PREGUNTA
@@ -154,7 +124,7 @@ def buscar_por_descripcion(df, col_desc, texto):
 
 def procesar_pregunta(df, pregunta):
     pregunta_norm = normalizar(pregunta)
-    keyword = extraer_keyword(pregunta)
+    keywords = extraer_keywords(pregunta)
 
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
@@ -170,11 +140,13 @@ def procesar_pregunta(df, pregunta):
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
-    col_codigo = columnas["codigo"]
-    if col_codigo:
-        df[col_codigo] = df[col_codigo].astype(str).str.strip()
-        if pregunta_norm.upper() in df[col_codigo].values:
-            fila = df[df[col_codigo] == pregunta_norm.upper()].iloc[0]
+    # --------------------------------------------------------
+    # BÚSQUEDA POR CÓDIGO EXACTO
+    # --------------------------------------------------------
+    if columnas["codigo"]:
+        df[columnas["codigo"]] = df[columnas["codigo"]].astype(str).str.strip()
+        if pregunta_norm.upper() in df[columnas["codigo"]].values:
+            fila = df[df[columnas["codigo"]] == pregunta_norm.upper()].iloc[0]
             return {
                 "tipo": "producto",
                 "data": {
@@ -185,16 +157,47 @@ def procesar_pregunta(df, pregunta):
                     "stock_total": parse_numero(fila[columnas["stock"]]),
                     "talles": [],
                     "color": fila[columnas["color"]],
-                    "codigo": fila[col_codigo]
+                    "codigo": fila[columnas["codigo"]]
                 },
                 "voz": f"Encontré el artículo {fila[col_desc]}",
                 "fuente": {}
             }
 
-    encontrados = buscar_por_descripcion(df, col_desc, keyword)
-    if not encontrados.empty:
+    # --------------------------------------------------------
+    # BÚSQUEDA POR TALLE
+    # --------------------------------------------------------
+    match_talle = re.search(r"\b(\d{1,2})\b", pregunta_norm)
+    if match_talle and columnas["talle"]:
+        talle_buscado = match_talle.group(1)
+        df_talle = df[df[columnas["talle"]].astype(str).str.contains(talle_buscado)]
+
+        if not df_talle.empty:
+            grupos = agrupar_por_modelo(
+                df_talle,
+                col_desc,
+                columnas["talle"],
+                columnas["stock"],
+                columnas["marca"],
+                columnas["rubro"],
+                columnas["publico"],
+                columnas["color"],
+                columnas["codigo"]
+            )
+            return {
+                "tipo": "lista",
+                "items": grupos,
+                "voz": f"Encontré {len(grupos)} modelos en talle {talle_buscado}.",
+                "fuente": {}
+            }
+
+    # --------------------------------------------------------
+    # BÚSQUEDA UNIVERSAL (marca, rubro, color, descripción, etc.)
+    # --------------------------------------------------------
+    df_universal = buscar_universal(df, keywords, columnas)
+
+    if not df_universal.empty:
         grupos = agrupar_por_modelo(
-            encontrados,
+            df_universal,
             col_desc,
             columnas["talle"],
             columnas["stock"],
@@ -211,6 +214,9 @@ def procesar_pregunta(df, pregunta):
             "fuente": {}
         }
 
+    # --------------------------------------------------------
+    # SIN RESULTADOS
+    # --------------------------------------------------------
     return {
         "tipo": "lista",
         "items": [],
@@ -218,4 +224,4 @@ def procesar_pregunta(df, pregunta):
         "fuente": {}
     }
 
-# ===== FIN INDEXER COMPLETO =====
+# ===== FIN INDEXER UNIVERSAL =====
