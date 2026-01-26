@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from indexer import procesar_pregunta
+from indexer import procesar_pregunta, autocompletar, detectar_columna_descripcion
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 import pandas as pd
 import io
@@ -46,7 +46,7 @@ app = FastAPI()
 # CORS para permitir acceso desde tu frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Podés restringirlo si querés
+    allow_origins=["*"],  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,7 +57,7 @@ class QueryRequest(BaseModel):
     question: str
 
 # ------------------------------------------------------------
-# ENDPOINT PRINCIPAL
+# ENDPOINT PRINCIPAL /query
 # ------------------------------------------------------------
 
 @app.post("/query")
@@ -85,6 +85,29 @@ async def query(req: QueryRequest):
             "voz": "Ocurrió un error procesando la consulta.",
             "error": str(e),
         }
+
+# ------------------------------------------------------------
+# ENDPOINT AUTOCOMPLETADO /autocomplete
+# ------------------------------------------------------------
+
+@app.get("/autocomplete")
+async def autocomplete(q: str):
+    try:
+        columnas = {
+            "descripcion": detectar_columna_descripcion(df),
+            "marca": next((c for c in df.columns if "marca" in c.lower()), None),
+            "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
+            "color": next((c for c in df.columns if "color" in c.lower()), None),
+            "codigo": next((c for c in df.columns if "codigo" in c.lower() or "código" in c.lower()), None),
+            "talle": next((c for c in df.columns if "talle" in c.lower()), None),
+        }
+
+        sugerencias = autocompletar(df, columnas, q)
+        return {"sugerencias": sugerencias}
+
+    except Exception as e:
+        print("ERROR EN /autocomplete:", e)
+        return {"sugerencias": []}
 
 # ------------------------------------------------------------
 # ENDPOINT DE PRUEBA
