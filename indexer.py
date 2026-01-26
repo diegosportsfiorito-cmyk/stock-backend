@@ -30,7 +30,8 @@ def parse_numero(valor):
 def extraer_keywords(pregunta):
     p = normalizar(pregunta)
     tokens = re.split(r"\W+", p)
-    stopwords = ["que","hay","tengo","de","el","la","los","las","un","una","stock","en","para","con"]
+    stopwords = ["que","hay","tengo","de","el","la","los","las","un","una",
+                 "stock","en","para","con","por","sobre","del","al","y","o","a"]
     return [t for t in tokens if t and t not in stopwords]
 
 # ------------------------------------------------------------
@@ -45,10 +46,10 @@ def detectar_columna_descripcion(df):
         "pantalon","pantalón","short",
         "botin","botines","media","medias",
         "guante","guantes","bolsa","boxeo",
-        "mochila","plush","avengers","marvel"
+        "mochila","plush","avengers","marvel","slide","bermuda"
     ]
 
-    columnas_prohibidas = ["rubro","marca","color","talle","cantidad","stock","precio"]
+    columnas_prohibidas = ["rubro","marca","color","talle","cantidad","stock","precio","lista","valoriz"]
 
     cols_norm = {c: c.lower().strip() for c in df.columns}
     puntajes = {}
@@ -65,7 +66,7 @@ def detectar_columna_descripcion(df):
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
-    # fallback: columna con más texto
+    # fallback: columna con más texto promedio
     return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
 
 # ------------------------------------------------------------
@@ -78,7 +79,8 @@ def _orden_talle(t):
     except:
         return 9999
 
-def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca, col_rubro, col_publico, col_color, col_codigo):
+def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
+                       col_marca, col_rubro, col_publico, col_color, col_codigo):
     grupos = []
 
     for desc, g in df.groupby(col_desc):
@@ -109,11 +111,9 @@ def buscar_universal(df, keywords, columnas):
 
     for kw in keywords:
         mask = False
-
         for col in columnas.values():
             if col:
                 mask = mask | df[col].astype(str).str.lower().str.contains(kw)
-
         df_filtrado = df_filtrado[mask]
 
     return df_filtrado
@@ -129,7 +129,7 @@ def procesar_pregunta(df, pregunta):
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
         "marca": next((c for c in df.columns if "marca" in c.lower()), None),
-        "codigo": next((c for c in df.columns if "art" in c.lower() or "codigo" in c.lower()), None),
+        "codigo": next((c for c in df.columns if "art" in c.lower() or "código" in c.lower() or "codigo" in c.lower()), None),
         "color": next((c for c in df.columns if "color" in c.lower()), None),
         "talle": next((c for c in df.columns if "talle" in c.lower()), None),
         "stock": next((c for c in df.columns if "cant" in c.lower() or "stock" in c.lower()), None),
@@ -140,23 +140,45 @@ def procesar_pregunta(df, pregunta):
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
+    # ===== DETECCIÓN INTELIGENTE DE MARCA Y RUBRO =====
+    if not columnas["marca"]:
+        posibles_marcas = ["adidas","nike","reebok","atomik","kioshi","prominent",
+                           "maraton","limited","authentic","puma","fila","topper"]
+        for col in df.columns:
+            if df[col].astype(str).str.lower().isin(posibles_marcas).any():
+                columnas["marca"] = col
+                break
+        if not columnas["marca"]:
+            columnas["marca"] = df.columns[0]
+
+    if not columnas["rubro"]:
+        posibles_rubros = ["ojotas","calzado","indumentaria","zapatilla","bermuda",
+                           "remera","buzo","campera","pantalon","pantalón","short"]
+        for col in df.columns:
+            if df[col].astype(str).str.lower().isin(posibles_rubros).any():
+                columnas["rubro"] = col
+                break
+        if not columnas["rubro"] and len(df.columns) > 1:
+            columnas["rubro"] = df.columns[1]
+
     # --------------------------------------------------------
     # BÚSQUEDA POR CÓDIGO EXACTO
     # --------------------------------------------------------
     if columnas["codigo"]:
         df[columnas["codigo"]] = df[columnas["codigo"]].astype(str).str.strip()
-        if pregunta_norm.upper() in df[columnas["codigo"]].values:
-            fila = df[df[columnas["codigo"]] == pregunta_norm.upper()].iloc[0]
+        codigo_mayus = pregunta_norm.upper()
+        if codigo_mayus in df[columnas["codigo"]].values:
+            fila = df[df[columnas["codigo"]] == codigo_mayus].iloc[0]
             return {
                 "tipo": "producto",
                 "data": {
                     "descripcion": fila[col_desc],
-                    "marca": fila[columnas["marca"]],
-                    "rubro": fila[columnas["rubro"]],
-                    "precio": parse_numero(fila[columnas["publico"]]),
-                    "stock_total": parse_numero(fila[columnas["stock"]]),
+                    "marca": fila[columnas["marca"]] if columnas["marca"] else "",
+                    "rubro": fila[columnas["rubro"]] if columnas["rubro"] else "",
+                    "precio": parse_numero(fila[columnas["publico"]]) if columnas["publico"] else None,
+                    "stock_total": parse_numero(fila[columnas["stock"]]) if columnas["stock"] else None,
                     "talles": [],
-                    "color": fila[columnas["color"]],
+                    "color": fila[columnas["color"]] if columnas["color"] else "",
                     "codigo": fila[columnas["codigo"]]
                 },
                 "voz": f"Encontré el artículo {fila[col_desc]}",
