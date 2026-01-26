@@ -1,4 +1,5 @@
-# drive.py
+# ===== INICIO DRIVE.PY =====
+
 import json
 import os
 from typing import List, Dict
@@ -12,13 +13,11 @@ GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-
 def _get_drive_service():
     info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     service = build("drive", "v3", credentials=creds)
     return service
-
 
 def listar_archivos_en_carpeta(folder_id: str) -> List[Dict]:
     service = _get_drive_service()
@@ -28,7 +27,6 @@ def listar_archivos_en_carpeta(folder_id: str) -> List[Dict]:
         fields="files(id, name, mimeType, modifiedTime)",
     ).execute()
     return results.get("files", [])
-
 
 def descargar_archivo_por_id(file_id: str) -> bytes:
     service = _get_drive_service()
@@ -40,3 +38,5 @@ def descargar_archivo_por_id(file_id: str) -> bytes:
         status, done = downloader.next_chunk()
     fh.seek(0)
     return fh.read()
+
+# ===== FIN DRIVE.PY =====
