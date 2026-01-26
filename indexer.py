@@ -1,7 +1,8 @@
-# ===== INDEXER UNIVERSAL COMPLETO =====
+# ===== INDEXER UNIVERSAL + AUTOCOMPLETADO =====
 
 import pandas as pd
 import re
+import math
 
 # ------------------------------------------------------------
 # NORMALIZACIÓN
@@ -22,6 +23,24 @@ def parse_numero(valor):
         return float(v)
     except:
         return 0
+
+# ------------------------------------------------------------
+# LIMPIEZA ANTI-NAN PARA JSON
+# ------------------------------------------------------------
+
+def limpiar_nan_en_valor(v):
+    if v is None:
+        return None
+    if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+        return None
+    return v
+
+def limpiar_nan_en_objeto(obj):
+    if isinstance(obj, dict):
+        return {k: limpiar_nan_en_objeto(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [limpiar_nan_en_objeto(v) for v in obj]
+    return limpiar_nan_en_valor(obj)
 
 # ------------------------------------------------------------
 # EXTRAER KEYWORDS
@@ -66,7 +85,6 @@ def detectar_columna_descripcion(df):
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
-    # fallback: columna con más texto promedio
     return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
 
 # ------------------------------------------------------------
@@ -81,6 +99,7 @@ def _orden_talle(t):
 
 def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
                        col_marca, col_rubro, col_publico, col_color, col_codigo):
+
     grupos = []
 
     for desc, g in df.groupby(col_desc):
@@ -90,11 +109,15 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
                 stock_t = int(sum(parse_numero(v) for v in gg[col_stock]))
                 talles.append({"talle": str(tl).strip(), "stock": stock_t})
 
+        precio_val = parse_numero(g[col_publico].iloc[0]) if col_publico else None
+        if precio_val == 0 and pd.isna(g[col_publico].iloc[0]):
+            precio_val = None
+
         grupos.append({
             "descripcion": desc,
             "marca": g[col_marca].iloc[0] if col_marca else "",
             "rubro": g[col_rubro].iloc[0] if col_rubro else "",
-            "precio": parse_numero(g[col_publico].iloc[0]) if col_publico else None,
+            "precio": precio_val,
             "talles": sorted(talles, key=lambda x: _orden_talle(x["talle"])),
             "codigo": g[col_codigo].iloc[0] if col_codigo else "",
             "color": g[col_color].iloc[0] if col_color else ""
@@ -117,6 +140,43 @@ def buscar_universal(df, keywords, columnas):
         df_filtrado = df_filtrado[mask]
 
     return df_filtrado
+
+# ------------------------------------------------------------
+# AUTOCOMPLETADO INTELIGENTE
+# ------------------------------------------------------------
+
+def generar_diccionario_autocompletado(df, columnas):
+    palabras = set()
+
+    columnas_relevantes = [
+        columnas["descripcion"],
+        columnas["marca"],
+        columnas["rubro"],
+        columnas["color"],
+        columnas["codigo"],
+        columnas["talle"]
+    ]
+
+    for col in columnas_relevantes:
+        if col:
+            for v in df[col].astype(str).tolist():
+                tokens = re.split(r"\W+", str(v).lower())
+                for t in tokens:
+                    if len(t) >= 2:
+                        palabras.add(t)
+
+    return sorted(list(palabras))
+
+def autocompletar(df, columnas, texto):
+    texto = normalizar(texto)
+    if len(texto) < 2:
+        return []
+
+    dicc = generar_diccionario_autocompletado(df, columnas)
+
+    sugerencias = [p for p in dicc if p.startswith(texto)]
+
+    return sugerencias[:12]
 
 # ------------------------------------------------------------
 # PROCESAR PREGUNTA
@@ -155,11 +215,22 @@ def procesar_pregunta(df, pregunta):
         posibles_rubros = ["ojotas","calzado","indumentaria","zapatilla","bermuda",
                            "remera","buzo","campera","pantalon","pantalón","short"]
         for col in df.columns:
-            if df[col].astype(str).str.lower().isin(posibles_rubros).any():
+            if df[col].astype(str).str.lower().isin(possibles_rubros).any():
                 columnas["rubro"] = col
                 break
         if not columnas["rubro"] and len(df.columns) > 1:
             columnas["rubro"] = df.columns[1]
+
+    # --------------------------------------------------------
+    # AUTOCOMPLETADO
+    # --------------------------------------------------------
+    if pregunta_norm.startswith("auto:"):
+        texto = pregunta_norm.replace("auto:", "").strip()
+        sugerencias = autocompletar(df, columnas, texto)
+        return limpiar_nan_en_objeto({
+            "tipo": "autocomplete",
+            "sugerencias": sugerencias
+        })
 
     # --------------------------------------------------------
     # BÚSQUEDA POR CÓDIGO EXACTO
@@ -169,7 +240,7 @@ def procesar_pregunta(df, pregunta):
         codigo_mayus = pregunta_norm.upper()
         if codigo_mayus in df[columnas["codigo"]].values:
             fila = df[df[columnas["codigo"]] == codigo_mayus].iloc[0]
-            return {
+            return limpiar_nan_en_objeto({
                 "tipo": "producto",
                 "data": {
                     "descripcion": fila[col_desc],
@@ -183,7 +254,7 @@ def procesar_pregunta(df, pregunta):
                 },
                 "voz": f"Encontré el artículo {fila[col_desc]}",
                 "fuente": {}
-            }
+            })
 
     # --------------------------------------------------------
     # BÚSQUEDA POR TALLE
@@ -205,15 +276,15 @@ def procesar_pregunta(df, pregunta):
                 columnas["color"],
                 columnas["codigo"]
             )
-            return {
+            return limpiar_nan_en_objeto({
                 "tipo": "lista",
                 "items": grupos,
                 "voz": f"Encontré {len(grupos)} modelos en talle {talle_buscado}.",
                 "fuente": {}
-            }
+            })
 
     # --------------------------------------------------------
-    # BÚSQUEDA UNIVERSAL (marca, rubro, color, descripción, etc.)
+    # BÚSQUEDA UNIVERSAL
     # --------------------------------------------------------
     df_universal = buscar_universal(df, keywords, columnas)
 
@@ -229,21 +300,21 @@ def procesar_pregunta(df, pregunta):
             columnas["color"],
             columnas["codigo"]
         )
-        return {
+        return limpiar_nan_en_objeto({
             "tipo": "lista",
             "items": grupos,
             "voz": f"Encontré {len(grupos)} modelos relacionados.",
             "fuente": {}
-        }
+        })
 
     # --------------------------------------------------------
     # SIN RESULTADOS
     # --------------------------------------------------------
-    return {
+    return limpiar_nan_en_objeto({
         "tipo": "lista",
         "items": [],
         "voz": "No encontré resultados para tu búsqueda.",
         "fuente": {}
-    }
+    })
 
-# ===== FIN INDEXER UNIVERSAL =====
+# ===== FIN INDEXER UNIVERSAL + AUTOCOMPLETADO =====
