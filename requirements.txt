@@ -2,16 +2,13 @@ fastapi
 uvicorn
 requests
 python-dotenv
-
 pandas
 numpy
 openpyxl
-
 google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
-
 PyPDF2
 pytesseract
 Pillow
