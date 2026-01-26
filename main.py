@@ -1,4 +1,4 @@
-# ===== INICIO MAIN.PY =====
+# ===== MAIN.PY FINAL Y VERIFICADO =====
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,12 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 import pandas as pd
 import io
 
+# ID de la carpeta de Google Drive
 FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
+
+# ------------------------------------------------------------
+# CARGAR EXCEL MÁS RECIENTE
+# ------------------------------------------------------------
 
 def cargar_excel_mas_reciente():
     archivos = listar_archivos_en_carpeta(FOLDER_ID)
@@ -16,6 +21,7 @@ def cargar_excel_mas_reciente():
     if not archivos:
         raise Exception("No se encontraron archivos en la carpeta de Drive.")
 
+    # Ordenar por fecha de modificación
     archivos_ordenados = sorted(
         archivos,
         key=lambda x: x["modifiedTime"],
@@ -28,20 +34,31 @@ def cargar_excel_mas_reciente():
     df = pd.read_excel(io.BytesIO(contenido))
     return df, archivo
 
+# Cargar Excel al iniciar el servidor
 df, archivo_fuente = cargar_excel_mas_reciente()
+
+# ------------------------------------------------------------
+# FASTAPI
+# ------------------------------------------------------------
 
 app = FastAPI()
 
+# CORS para permitir acceso desde tu frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Podés restringirlo si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Modelo de entrada
 class QueryRequest(BaseModel):
     question: str
+
+# ------------------------------------------------------------
+# ENDPOINT PRINCIPAL
+# ------------------------------------------------------------
 
 @app.post("/query")
 async def query(req: QueryRequest):
@@ -49,7 +66,15 @@ async def query(req: QueryRequest):
 
     try:
         resultado = procesar_pregunta(df, pregunta)
-        resultado["fuente"] = archivo_fuente
+
+        # Agregar fuente del Excel
+        resultado["fuente"] = {
+            "id": archivo_fuente["id"],
+            "name": archivo_fuente["name"],
+            "mimeType": archivo_fuente["mimeType"],
+            "modifiedTime": archivo_fuente["modifiedTime"]
+        }
+
         return resultado
 
     except Exception as e:
@@ -61,8 +86,16 @@ async def query(req: QueryRequest):
             "error": str(e),
         }
 
+# ------------------------------------------------------------
+# ENDPOINT DE PRUEBA
+# ------------------------------------------------------------
+
 @app.get("/")
 async def root():
-    return {"status": "OK", "message": "Stock IA Backend funcionando."}
+    return {
+        "status": "OK",
+        "message": "Stock IA Backend funcionando.",
+        "archivo_cargado": archivo_fuente["name"]
+    }
 
 # ===== FIN MAIN.PY =====
