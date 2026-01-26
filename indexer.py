@@ -24,18 +24,34 @@ def parse_numero(valor):
         return 0
 
 # ------------------------------------------------------------
+# EXTRAER KEYWORD DE LA PREGUNTA
+# ------------------------------------------------------------
+
+def extraer_keyword(pregunta):
+    p = normalizar(pregunta)
+
+    stopwords = [
+        "que", "hay", "tengo", "de", "el", "la", "los", "las",
+        "un", "una", "hay", "stock", "cuanto", "cuántos"
+    ]
+
+    tokens = [t for t in re.split(r"\W+", p) if t and t not in stopwords]
+
+    if not tokens:
+        return p
+
+    # Si contiene "pantu", priorizarlo
+    for t in tokens:
+        if "pantu" in t:
+            return "pantu"
+
+    return tokens[0]
+
+# ------------------------------------------------------------
 # DETECCIÓN INTELIGENTE DE COLUMNA DESCRIPCIÓN
 # ------------------------------------------------------------
 
 def detectar_columna_descripcion(df):
-    """
-    Detecta la columna correcta de descripción aunque:
-    - haya varias columnas llamadas 'Descripción'
-    - cambie el orden
-    - cambien los nombres
-    - haya columnas vacías
-    """
-
     keywords = [
         "pantufla", "pantuflas", "pantu",
         "zapatilla", "zapatillas", "zapa",
@@ -61,28 +77,23 @@ def detectar_columna_descripcion(df):
     for col in df.columns:
         nombre = cols_norm[col]
 
-        # descartar columnas prohibidas
         if any(p in nombre for p in columnas_prohibidas):
             continue
 
         serie = df[col].astype(str).str.lower()
 
-        # descartar columnas vacías
         if serie.replace("", None).count() == 0:
             continue
 
         puntaje = 0
-
         for kw in keywords:
             puntaje += serie.str.contains(kw, na=False).sum()
 
         puntajes[col] = puntaje
 
-    # Si alguna columna tiene coincidencias → esa es la descripción
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
-    # Fallback: elegir la columna con más texto útil
     mejor_col = None
     mejor_score = -1
 
@@ -113,6 +124,7 @@ def _orden_talle(t):
 
 def agrupar_por_modelo(df, col_desc, col_talle, col_stock, col_marca, col_rubro, col_publico, col_color, col_codigo):
     grupos = []
+
     for desc, g in df.groupby(col_desc):
         talles = []
         if col_talle and col_stock:
@@ -142,6 +154,7 @@ def buscar_por_descripcion(df, col_desc, texto):
 
 def procesar_pregunta(df, pregunta):
     pregunta_norm = normalizar(pregunta)
+    keyword = extraer_keyword(pregunta)
 
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
@@ -154,11 +167,9 @@ def procesar_pregunta(df, pregunta):
         "valorizado": next((c for c in df.columns if "valoriz" in c.lower()), None),
     }
 
-    # Detectar columna correcta de descripción
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
-    # Búsqueda por código exacto
     col_codigo = columnas["codigo"]
     if col_codigo:
         df[col_codigo] = df[col_codigo].astype(str).str.strip()
@@ -180,8 +191,7 @@ def procesar_pregunta(df, pregunta):
                 "fuente": {}
             }
 
-    # Búsqueda por descripción
-    encontrados = buscar_por_descripcion(df, col_desc, pregunta_norm)
+    encontrados = buscar_por_descripcion(df, col_desc, keyword)
     if not encontrados.empty:
         grupos = agrupar_por_modelo(
             encontrados,
@@ -201,7 +211,6 @@ def procesar_pregunta(df, pregunta):
             "fuente": {}
         }
 
-    # Sin resultados
     return {
         "tipo": "lista",
         "items": [],
