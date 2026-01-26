@@ -126,6 +126,18 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
     return grupos
 
 # ------------------------------------------------------------
+# DETECCIÓN ROBUSTA DE COLUMNA DE CÓDIGO
+# ------------------------------------------------------------
+
+def detectar_columna_codigo(df):
+    for c in df.columns:
+        nombre = c.lower()
+        nombre = nombre.replace("í","i").replace("ó","o").replace("á","a").replace("é","e").replace("ú","u")
+        if any(k in nombre for k in ["art", "codigo", "cod", "sku", "ean"]):
+            return c
+    return None
+
+# ------------------------------------------------------------
 # BÚSQUEDA UNIVERSAL
 # ------------------------------------------------------------
 
@@ -189,7 +201,7 @@ def procesar_pregunta(df, pregunta):
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
         "marca": next((c for c in df.columns if "marca" in c.lower()), None),
-        "codigo": next((c for c in df.columns if "art" in c.lower() or "código" in c.lower() or "codigo" in c.lower()), None),
+        "codigo": detectar_columna_codigo(df),
         "color": next((c for c in df.columns if "color" in c.lower()), None),
         "talle": next((c for c in df.columns if "talle" in c.lower()), None),
         "stock": next((c for c in df.columns if "cant" in c.lower() or "stock" in c.lower()), None),
@@ -224,7 +236,6 @@ def procesar_pregunta(df, pregunta):
         articulo = partes[0] if len(partes) >= 1 else None
         extra = partes[1] if len(partes) >= 2 else None
 
-        # Buscar artículo por código EXACTO
         if articulo and columnas["codigo"]:
             df_art = df[df[columnas["codigo"]].astype(str).str.strip() == articulo]
 
@@ -236,11 +247,9 @@ def procesar_pregunta(df, pregunta):
                     "fuente": {}
                 })
 
-            # Si extra es un número → talle
             if extra and extra.isdigit() and columnas["talle"]:
                 df_art = df_art[df_art[columnas["talle"]].astype(str).str.contains(extra)]
 
-            # Si extra es texto → color
             elif extra and columnas["color"]:
                 df_art = df_art[df_art[columnas["color"]].astype(str).str.lower().str.contains(extra)]
 
@@ -269,6 +278,7 @@ def procesar_pregunta(df, pregunta):
     if columnas["codigo"]:
         df[columnas["codigo"]] = df[columnas["codigo"]].astype(str).str.strip()
         codigo_mayus = pregunta_norm.upper()
+
         if codigo_mayus in df[columnas["codigo"]].values:
             fila = df[df[columnas["codigo"]] == codigo_mayus].iloc[0]
             return limpiar_nan_en_objeto({
