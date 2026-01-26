@@ -215,7 +215,7 @@ def procesar_pregunta(df, pregunta):
         posibles_rubros = ["ojotas","calzado","indumentaria","zapatilla","bermuda",
                            "remera","buzo","campera","pantalon","pantalón","short"]
         for col in df.columns:
-            if df[col].astype(str).str.lower().isin(possibles_rubros).any():
+            if df[col].astype(str).str.lower().isin(posibles_rubros).any():
                 columnas["rubro"] = col
                 break
         if not columnas["rubro"] and len(df.columns) > 1:
@@ -317,4 +317,4 @@ def procesar_pregunta(df, pregunta):
         "fuente": {}
     })
 
-# ===== FIN INDEXER UNIVERSAL + AUTOCOMPLETADO =====
+# ===== FIN INDEXER UNIVERSAL =====
