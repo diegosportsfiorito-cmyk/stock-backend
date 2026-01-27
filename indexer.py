@@ -1,4 +1,12 @@
-# ===== INDEXER UNIVERSAL + AUTOCOMPLETADO + DECODIFICACIÓN DE CÓDIGO DE BARRAS =====
+# ===== INDEXER UNIVERSAL v2.0 PRO =====
+# Incluye:
+# - Decodificación robusta de códigos de barra
+# - Resumen inteligente (marca, talle, rubro, color, mixto)
+# - Consultas por rango (A)
+# - Autocompletado
+# - Búsqueda universal
+# - Anti-NaN
+# - Preparado para dashboard
 
 import pandas as pd
 import re
@@ -43,15 +51,16 @@ def limpiar_nan_en_objeto(obj):
     return limpiar_nan_en_valor(obj)
 
 # ------------------------------------------------------------
-# EXTRAER KEYWORDS
+# DETECTAR COLUMNA DE CÓDIGO (ROBUSTO)
 # ------------------------------------------------------------
 
-def extraer_keywords(pregunta):
-    p = normalizar(pregunta)
-    tokens = re.split(r"\W+", p)
-    stopwords = ["que","hay","tengo","de","el","la","los","las","un","una",
-                 "stock","en","para","con","por","sobre","del","al","y","o","a"]
-    return [t for t in tokens if t and t not in stopwords]
+def detectar_columna_codigo(df):
+    for c in df.columns:
+        nombre = c.lower()
+        nombre = nombre.replace("í","i").replace("ó","o").replace("á","a").replace("é","e").replace("ú","u")
+        if any(k in nombre for k in ["art", "codigo", "cod", "sku", "ean"]):
+            return c
+    return None
 
 # ------------------------------------------------------------
 # DETECTAR COLUMNA DE DESCRIPCIÓN
@@ -86,6 +95,108 @@ def detectar_columna_descripcion(df):
         return max(puntajes, key=puntajes.get)
 
     return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
+
+# ------------------------------------------------------------
+# DECODIFICACIÓN ROBUSTA DE CÓDIGOS DE BARRA
+# ------------------------------------------------------------
+
+def decodificar_codigo_barras(cadena):
+    s = cadena.replace("!!", "!").replace("¡", "!").replace("//", "/")
+    partes = re.split(r"[!/]", s)
+    partes = [p.strip() for p in partes if p.strip()]
+
+    if not partes:
+        return None, None, None
+
+    articulo = partes[0]
+    color = None
+    talle = None
+
+    if len(partes) == 1:
+        return articulo, color, talle
+
+    ultimo = partes[-1]
+
+    if re.fullmatch(r"\d+(\.\d+)?", ultimo):
+        talle = ultimo
+        if len(partes) >= 3:
+            color = " ".join(partes[1:-1])
+    else:
+        color = " ".join(partes[1:])
+
+    return articulo, color, talle
+
+# ------------------------------------------------------------
+# DETECTAR INTENCIÓN DEL USUARIO
+# ------------------------------------------------------------
+
+def detectar_intencion(texto, columnas, df):
+    tokens = texto.split()
+
+    # Talle
+    if any(re.fullmatch(r"\d{1,2}(\.\d+)?", t) for t in tokens):
+        return {"tipo": "talle", "tokens": tokens}
+
+    # Rango de precios
+    if "entre" in texto and "y" in texto:
+        return {"tipo": "rango_precio", "tokens": tokens}
+
+    # Marca
+    if columnas["marca"]:
+        marcas = df[columnas["marca"]].astype(str).str.lower().unique()
+        for t in tokens:
+            if t in marcas:
+                return {"tipo": "marca", "tokens": tokens}
+
+    # Rubro
+    if columnas["rubro"]:
+        rubros = df[columnas["rubro"]].astype(str).str.lower().unique()
+        for t in tokens:
+            if t in rubros:
+                return {"tipo": "rubro", "tokens": tokens}
+
+    # Color
+    if columnas["color"]:
+        colores = df[columnas["color"]].astype(str).str.lower().unique()
+        for t in tokens:
+            if t in colores:
+                return {"tipo": "color", "tokens": tokens}
+
+    # Mixto
+    if len(tokens) > 1:
+        return {"tipo": "mixto", "tokens": tokens}
+
+    return {"tipo": "texto", "tokens": tokens}
+
+# ------------------------------------------------------------
+# GENERAR RESUMEN INTELIGENTE
+# ------------------------------------------------------------
+
+def generar_resumen(df, columnas):
+    resumen = {}
+
+    resumen["cant_articulos"] = df[columnas["codigo"]].nunique() if columnas["codigo"] else len(df)
+    resumen["unidades_totales"] = int(df[columnas["stock"]].apply(parse_numero).sum()) if columnas["stock"] else None
+    resumen["valorizado_total"] = float(df[columnas["valorizado"]].apply(parse_numero).sum()) if columnas["valorizado"] else None
+
+    if columnas["publico"]:
+        precios = df[columnas["publico"]].apply(parse_numero)
+        resumen["precio_min"] = float(precios.min())
+        resumen["precio_max"] = float(precios.max())
+
+    if columnas["rubro"]:
+        resumen["rubros"] = sorted(set(df[columnas["rubro"]].astype(str)))
+
+    if columnas["color"]:
+        resumen["colores"] = sorted(set(df[columnas["color"]].astype(str)))
+
+    if columnas["talle"]:
+        resumen["talles"] = sorted(set(df[columnas["talle"]].astype(str)))
+
+    if columnas["marca"]:
+        resumen["marcas"] = sorted(set(df[columnas["marca"]].astype(str)))
+
+    return resumen
 
 # ------------------------------------------------------------
 # AGRUPACIÓN POR MODELO
@@ -126,35 +237,7 @@ def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
     return grupos
 
 # ------------------------------------------------------------
-# DETECCIÓN ROBUSTA DE COLUMNA DE CÓDIGO
-# ------------------------------------------------------------
-
-def detectar_columna_codigo(df):
-    for c in df.columns:
-        nombre = c.lower()
-        nombre = nombre.replace("í","i").replace("ó","o").replace("á","a").replace("é","e").replace("ú","u")
-        if any(k in nombre for k in ["art", "codigo", "cod", "sku", "ean"]):
-            return c
-    return None
-
-# ------------------------------------------------------------
-# BÚSQUEDA UNIVERSAL
-# ------------------------------------------------------------
-
-def buscar_universal(df, keywords, columnas):
-    df_filtrado = df.copy()
-
-    for kw in keywords:
-        mask = False
-        for col in columnas.values():
-            if col:
-                mask = mask | df[col].astype(str).str.lower().str.contains(kw)
-        df_filtrado = df_filtrado[mask]
-
-    return df_filtrado
-
-# ------------------------------------------------------------
-# AUTOCOMPLETADO INTELIGENTE
+# AUTOCOMPLETADO
 # ------------------------------------------------------------
 
 def generar_diccionario_autocompletado(df, columnas):
@@ -174,29 +257,26 @@ def generar_diccionario_autocompletado(df, columnas):
             for v in df[col].astype(str).tolist():
                 tokens = re.split(r"\W+", str(v).lower())
                 for t in tokens:
-                    if len(t) >= 2:
+                    if len(t) >= 1:
                         palabras.add(t)
 
     return sorted(list(palabras))
 
 def autocompletar(df, columnas, texto):
     texto = normalizar(texto)
-    if len(texto) < 2:
+    if len(texto) < 1:
         return []
 
     dicc = generar_diccionario_autocompletado(df, columnas)
-
     sugerencias = [p for p in dicc if p.startswith(texto)]
-
     return sugerencias[:12]
 
 # ------------------------------------------------------------
-# PROCESAR PREGUNTA
+# PROCESAR PREGUNTA PRINCIPAL
 # ------------------------------------------------------------
 
 def procesar_pregunta(df, pregunta):
     pregunta_norm = normalizar(pregunta)
-    keywords = extraer_keywords(pregunta)
 
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
@@ -224,63 +304,42 @@ def procesar_pregunta(df, pregunta):
         })
 
     # --------------------------------------------------------
-    # DECODIFICACIÓN DE CÓDIGO DE BARRAS (ARTICULO / COLOR / TALLE)
+    # CÓDIGO DE BARRAS
     # --------------------------------------------------------
     if any(sep in pregunta_norm for sep in ["/", "!", "¡"]):
-        for sep in ["/", "!", "¡"]:
-            if sep in pregunta_norm:
-                partes = pregunta_norm.split(sep)
-                partes = [p.strip() for p in partes if p.strip()]
-                break
-
-        articulo = partes[0] if len(partes) >= 1 else None
-        extra = partes[1] if len(partes) >= 2 else None
+        articulo, color_extra, talle_extra = decodificar_codigo_barras(pregunta_norm)
 
         if articulo and columnas["codigo"]:
             df_art = df[df[columnas["codigo"]].astype(str).str.strip() == articulo]
 
             if df_art.empty:
-                return limpiar_nan_en_objeto({
-                    "tipo": "lista",
-                    "items": [],
-                    "voz": "No encontré ese artículo.",
-                    "fuente": {}
-                })
+                return {"tipo": "lista", "items": [], "voz": "No encontré ese artículo."}
 
-            if extra and extra.isdigit() and columnas["talle"]:
-                df_art = df_art[df_art[columnas["talle"]].astype(str).str.contains(extra)]
+            if talle_extra and columnas["talle"]:
+                df_art = df_art[df_art[columnas["talle"]].astype(str).str.contains(str(talle_extra), na=False)]
 
-            elif extra and columnas["color"]:
-                df_art = df_art[df_art[columnas["color"]].astype(str).str.lower().str.contains(extra)]
+            if color_extra and columnas["color"]:
+                df_art = df_art[df_art[columnas["color"]].astype(str).str.lower().str.contains(color_extra.lower(), na=False)]
 
             grupos = agrupar_por_modelo(
-                df_art,
-                columnas["descripcion"],
-                columnas["talle"],
-                columnas["stock"],
-                columnas["marca"],
-                columnas["rubro"],
-                columnas["publico"],
-                columnas["color"],
-                columnas["codigo"]
+                df_art, col_desc, columnas["talle"], columnas["stock"],
+                columnas["marca"], columnas["rubro"], columnas["publico"],
+                columnas["color"], columnas["codigo"]
             )
 
             return limpiar_nan_en_objeto({
                 "tipo": "lista",
                 "items": grupos,
-                "voz": "Código de barras interpretado correctamente.",
-                "fuente": {}
+                "voz": "Código de barras interpretado correctamente."
             })
 
     # --------------------------------------------------------
-    # BÚSQUEDA POR CÓDIGO EXACTO
+    # CÓDIGO EXACTO
     # --------------------------------------------------------
     if columnas["codigo"]:
         df[columnas["codigo"]] = df[columnas["codigo"]].astype(str).str.strip()
-        codigo_mayus = pregunta_norm.upper()
-
-        if codigo_mayus in df[columnas["codigo"]].values:
-            fila = df[df[columnas["codigo"]] == codigo_mayus].iloc[0]
+        if pregunta_norm.upper() in df[columnas["codigo"]].values:
+            fila = df[df[columnas["codigo"]] == pregunta_norm.upper()].iloc[0]
             return limpiar_nan_en_objeto({
                 "tipo": "producto",
                 "data": {
@@ -293,69 +352,69 @@ def procesar_pregunta(df, pregunta):
                     "color": fila[columnas["color"]] if columnas["color"] else "",
                     "codigo": fila[columnas["codigo"]]
                 },
-                "voz": f"Encontré el artículo {fila[col_desc]}",
-                "fuente": {}
+                "voz": f"Encontré el artículo {fila[col_desc]}"
             })
 
     # --------------------------------------------------------
-    # BÚSQUEDA POR TALLE
+    # DETECTAR INTENCIÓN
     # --------------------------------------------------------
-    match_talle = re.search(r"\b(\d{1,2})\b", pregunta_norm)
-    if match_talle and columnas["talle"]:
-        talle_buscado = match_talle.group(1)
-        df_talle = df[df[columnas["talle"]].astype(str).str.contains(talle_buscado)]
-
-        if not df_talle.empty:
-            grupos = agrupar_por_modelo(
-                df_talle,
-                col_desc,
-                columnas["talle"],
-                columnas["stock"],
-                columnas["marca"],
-                columnas["rubro"],
-                columnas["publico"],
-                columnas["color"],
-                columnas["codigo"]
-            )
-            return limpiar_nan_en_objeto({
-                "tipo": "lista",
-                "items": grupos,
-                "voz": f"Encontré {len(grupos)} modelos en talle {talle_buscado}.",
-                "fuente": {}
-            })
+    intent = detectar_intencion(pregunta_norm, columnas, df)
 
     # --------------------------------------------------------
-    # BÚSQUEDA UNIVERSAL
+    # RANGO DE PRECIOS
     # --------------------------------------------------------
-    df_universal = buscar_universal(df, keywords, columnas)
+    if intent["tipo"] == "rango_precio" and columnas["publico"]:
+        m = re.search(r"entre\s+(\d+)\s+y\s+(\d+)", pregunta_norm)
+        if m:
+            pmin, pmax = float(m.group(1)), float(m.group(2))
+            precios = df[columnas["publico"]].apply(parse_numero)
+            df_rango = df[(precios >= pmin) & (precios <= pmax)]
 
-    if not df_universal.empty:
+            if not df_rango.empty:
+                resumen = generar_resumen(df_rango, columnas)
+                grupos = agrupar_por_modelo(
+                    df_rango, col_desc, columnas["talle"], columnas["stock"],
+                    columnas["marca"], columnas["rubro"], columnas["publico"],
+                    columnas["color"], columnas["codigo"]
+                )
+                return limpiar_nan_en_objeto({
+                    "tipo": "resumen",
+                    "criterio": "rango_precio",
+                    "resumen": resumen,
+                    "items": grupos,
+                    "voz": f"Encontré {resumen['cant_articulos']} artículos entre {pmin} y {pmax} pesos."
+                })
+
+    # --------------------------------------------------------
+    # RESUMEN INTELIGENTE (marca, talle, rubro, color, mixto)
+    # --------------------------------------------------------
+    df_filtrado = df.copy()
+
+    for t in intent["tokens"]:
+        mask = False
+        for col in columnas.values():
+            if col:
+                mask = mask | df[col].astype(str).str.lower().str.contains(t)
+        df_filtrado = df_filtrado[mask]
+
+    if not df_filtrado.empty:
+        resumen = generar_resumen(df_filtrado, columnas)
         grupos = agrupar_por_modelo(
-            df_universal,
-            col_desc,
-            columnas["talle"],
-            columnas["stock"],
-            columnas["marca"],
-            columnas["rubro"],
-            columnas["publico"],
-            columnas["color"],
-            columnas["codigo"]
+            df_filtrado, col_desc, columnas["talle"], columnas["stock"],
+            columnas["marca"], columnas["rubro"], columnas["publico"],
+            columnas["color"], columnas["codigo"]
         )
         return limpiar_nan_en_objeto({
-            "tipo": "lista",
+            "tipo": "resumen",
+            "criterio": intent["tipo"],
+            "resumen": resumen,
             "items": grupos,
-            "voz": f"Encontré {len(grupos)} modelos relacionados.",
-            "fuente": {}
+            "voz": f"Resumen generado para tu consulta."
         })
 
     # --------------------------------------------------------
     # SIN RESULTADOS
     # --------------------------------------------------------
-    return limpiar_nan_en_objeto({
-        "tipo": "lista",
-        "items": [],
-        "voz": "No encontré resultados para tu búsqueda.",
-        "fuente": {}
-    })
+    return {"tipo": "lista", "items": [], "voz": "No encontré resultados."}
 
-# ===== FIN INDEXER UNIVERSAL =====
+# ===== FIN INDEXER UNIVERSAL v2.0 PRO =====
