@@ -1,4 +1,4 @@
-# ===== MAIN.PY v2.0 PRO COMPLETO =====
+# ===== MAIN.PY v3.0 PRO COMPLETO =====
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -32,8 +32,70 @@ def cargar_excel_mas_reciente():
 
     return df, archivo
 
+
 # Cargar Excel al iniciar el servidor
 df, archivo_fuente = cargar_excel_mas_reciente()
+
+# ------------------------------------------------------------
+# RENOMBRAR COLUMNAS SEGÚN ORDEN FIJO DEL EXCEL
+# ------------------------------------------------------------
+
+df = df.rename(columns={
+    df.columns[0]: "Marca",
+    df.columns[1]: "Rubro",
+    df.columns[2]: "Codigo",
+    df.columns[3]: "Descripcion",
+    df.columns[4]: "Color",
+    df.columns[5]: "Talle",
+    df.columns[6]: "Stock",
+    df.columns[7]: "Precio",
+    df.columns[8]: "Valorizado"
+})
+
+# ------------------------------------------------------------
+# PREPROCESAMIENTO GLOBAL (ACELERA TODO)
+# ------------------------------------------------------------
+
+def norm(x):
+    try:
+        return str(x).strip().lower()
+    except:
+        return ""
+
+df["Marca_norm"] = df["Marca"].apply(norm)
+df["Rubro_norm"] = df["Rubro"].apply(norm)
+df["Descripcion_norm"] = df["Descripcion"].apply(norm)
+df["Color_norm"] = df["Color"].apply(norm)
+df["Talle_norm"] = df["Talle"].apply(norm)
+df["Codigo_norm"] = df["Codigo"].apply(norm)
+
+# Columna de búsqueda rápida
+df["__search"] = (
+    df["Marca_norm"] + " " +
+    df["Rubro_norm"] + " " +
+    df["Descripcion_norm"] + " " +
+    df["Color_norm"] + " " +
+    df["Talle_norm"] + " " +
+    df["Codigo_norm"]
+)
+
+# Convertir números una sola vez
+df["Stock"] = pd.to_numeric(df["Stock"], errors="coerce").fillna(0)
+df["Precio"] = pd.to_numeric(df["Precio"], errors="coerce").fillna(0)
+df["Valorizado"] = pd.to_numeric(df["Valorizado"], errors="coerce").fillna(0)
+
+# ------------------------------------------------------------
+# MÉTRICAS GLOBALES PARA EL DASHBOARD
+# ------------------------------------------------------------
+
+metricas_globales = {
+    "stock_total": int(df["Stock"].sum()),
+    "articulos": int(df["Codigo"].nunique()),
+    "rubros": df.groupby("Rubro")["Stock"].sum().sort_values(ascending=False).to_dict(),
+    "marcas": df.groupby("Marca")["Stock"].sum().sort_values(ascending=False).to_dict(),
+    "talles": df.groupby("Talle")["Stock"].sum().sort_values(ascending=False).to_dict(),
+    "colores": df.groupby("Color")["Stock"].sum().sort_values(ascending=False).to_dict(),
+}
 
 # ------------------------------------------------------------
 # FASTAPI
@@ -92,12 +154,12 @@ async def query(req: QueryRequest):
 async def autocomplete(q: str):
     try:
         columnas = {
-            "descripcion": detectar_columna_descripcion(df),
-            "marca": next((c for c in df.columns if "marca" in c.lower()), None),
-            "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
-            "color": next((c for c in df.columns if "color" in c.lower()), None),
-            "codigo": next((c for c in df.columns if "art" in c.lower() or "cod" in c.lower()), None),
-            "talle": next((c for c in df.columns if "talle" in c.lower()), None),
+            "descripcion": "Descripcion",
+            "marca": "Marca",
+            "rubro": "Rubro",
+            "color": "Color",
+            "codigo": "Codigo",
+            "talle": "Talle",
         }
 
         sugerencias = autocompletar(df, columnas, q)
@@ -106,6 +168,14 @@ async def autocomplete(q: str):
     except Exception as e:
         print("ERROR EN /autocomplete:", e)
         return {"sugerencias": []}
+
+# ------------------------------------------------------------
+# ENDPOINT DASHBOARD GLOBAL
+# ------------------------------------------------------------
+
+@app.get("/dashboard/global")
+async def dashboard_global():
+    return metricas_globales
 
 # ------------------------------------------------------------
 # ENDPOINT DE PRUEBA
