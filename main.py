@@ -1,4 +1,4 @@
-# ===== MAIN.PY FINAL Y VERIFICADO =====
+# ===== MAIN.PY v2.0 PRO COMPLETO =====
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,7 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 import pandas as pd
 import io
 
-# ID de la carpeta de Google Drive
+# Carpeta de Google Drive
 FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
 # ------------------------------------------------------------
@@ -17,11 +17,9 @@ FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
 def cargar_excel_mas_reciente():
     archivos = listar_archivos_en_carpeta(FOLDER_ID)
-
     if not archivos:
-        raise Exception("No se encontraron archivos en la carpeta de Drive.")
+        raise Exception("No se encontraron archivos en Drive.")
 
-    # Ordenar por fecha de modificación
     archivos_ordenados = sorted(
         archivos,
         key=lambda x: x["modifiedTime"],
@@ -30,8 +28,8 @@ def cargar_excel_mas_reciente():
 
     archivo = archivos_ordenados[0]
     contenido = descargar_archivo_por_id(archivo["id"])
-
     df = pd.read_excel(io.BytesIO(contenido))
+
     return df, archivo
 
 # Cargar Excel al iniciar el servidor
@@ -67,7 +65,7 @@ async def query(req: QueryRequest):
     try:
         resultado = procesar_pregunta(df, pregunta)
 
-        # Agregar fuente del Excel
+        # Agregar información del archivo fuente
         resultado["fuente"] = {
             "id": archivo_fuente["id"],
             "name": archivo_fuente["name"],
@@ -98,7 +96,7 @@ async def autocomplete(q: str):
             "marca": next((c for c in df.columns if "marca" in c.lower()), None),
             "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
             "color": next((c for c in df.columns if "color" in c.lower()), None),
-            "codigo": next((c for c in df.columns if "codigo" in c.lower() or "código" in c.lower()), None),
+            "codigo": next((c for c in df.columns if "art" in c.lower() or "cod" in c.lower()), None),
             "talle": next((c for c in df.columns if "talle" in c.lower()), None),
         }
 
