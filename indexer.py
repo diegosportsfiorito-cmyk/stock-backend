@@ -1,4 +1,4 @@
-# ===== INDEXER UNIVERSAL v3.1 PRO =====
+# ===== INDEXER UNIVERSAL v3.2 PRO =====
 # Optimizado para:
 # - Búsqueda natural (dime, decime, mostrame, etc.)
 # - Coincidencias parciales con __search
@@ -131,36 +131,30 @@ def decodificar_codigo_barras(cadena):
 def detectar_intencion(texto, columnas, df):
     tokens = texto.split()
 
-    # Talle
     if any(re.fullmatch(r"\d{1,2}(\.\d+)?", t) for t in tokens):
         return {"tipo": "talle", "tokens": tokens}
 
-    # Rango de precios
     if "entre" in texto and "y" in texto:
         return {"tipo": "rango_precio", "tokens": tokens}
 
-    # Marca
     if columnas["marca"]:
         marcas = df[columnas["marca"]].astype(str).str.lower().unique()
         for t in tokens:
             if t in marcas:
                 return {"tipo": "marca", "tokens": tokens}
 
-    # Rubro
     if columnas["rubro"]:
         rubros = df[columnas["rubro"]].astype(str).str.lower().unique()
         for t in tokens:
             if t in rubros:
                 return {"tipo": "rubro", "tokens": tokens}
 
-    # Color
     if columnas["color"]:
         colores = df[columnas["color"]].astype(str).str.lower().unique()
         for t in tokens:
             if t in colores:
                 return {"tipo": "color", "tokens": tokens}
 
-    # Mixto
     if len(tokens) > 1:
         return {"tipo": "mixto", "tokens": tokens}
 
@@ -179,183 +173,13 @@ def generar_resumen(df, columnas):
 
     if columnas["publico"]:
         precios = df[columnas["publico"]].apply(parse_numero)
-        resumen["precio_min"] = float(precios.min())
-        resumen["precio_max"] = float(precios.max())
-
-    if columnas["rubro"]:
-        resumen["rubros"] = sorted(set(df[columnas["rubro"]].astype(str)))
-
-    if columnas["color"]:
-        resumen["colores"] = sorted(set(df[columnas["color"]].astype(str)))
-
-    if columnas["talle"]:
-        resumen["talles"] = sorted(set(df[columnas["talle"]].astype(str)))
-
-    if columnas["marca"]:
-        resumen["marcas"] = sorted(set(df[columnas["marca"]].astype(str)))
-
-    return resumen
-
-# ------------------------------------------------------------
-# AGRUPACIÓN POR MODELO
-# ------------------------------------------------------------
-
-def _orden_talle(t):
-    try:
-        return int(re.sub(r"\D", "", str(t)))
-    except:
-        return 9999
-
-def agrupar_por_modelo(df, col_desc, col_talle, col_stock,
-                       col_marca, col_rubro, col_publico, col_color, col_codigo):
-
-    grupos = []
-
-    for desc, g in df.groupby(col_desc):
-        talles = []
-        if col_talle and col_stock:
-            for tl, gg in g.groupby(col_talle):
-                stock_t = int(sum(parse_numero(v) for v in gg[col_stock]))
-                talles.append({"talle": str(tl).strip(), "stock": stock_t})
-
-        precio_val = parse_numero(g[col_publico].iloc[0]) if col_publico else None
-        if precio_val == 0 and pd.isna(g[col_publico].iloc[0]):
-            precio_val = None
-
-        grupos.append({
-            "descripcion": desc,
-            "marca": g[col_marca].iloc[0] if col_marca else "",
-            "rubro": g[col_rubro].iloc[0] if col_rubro else "",
-            "precio": precio_val,
-            "talles": sorted(talles, key=lambda x: _orden_talle(x["talle"])),
-            "codigo": g[col_codigo].iloc[0] if col_codigo else "",
-            "color": g[col_color].iloc[0] if col_color else ""
-        })
-
-    return grupos
-
-# ------------------------------------------------------------
-# AUTOCOMPLETADO
-# ------------------------------------------------------------
-
-def generar_diccionario_autocompletado(df, columnas):
-    palabras = set()
-
-    columnas_relevantes = [
-        columnas["descripcion"],
-        columnas["marca"],
-        columnas["rubro"],
-        columnas["color"],
-        columnas["codigo"],
-        columnas["talle"]
-    ]
-
-    for col in columnas_relevantes:
-        if col:
-            for v in df[col].astype(str).tolist():
-                tokens = re.split(r"\W+", str(v).lower())
-                for t in tokens:
-                    if len(t) >= 1:
-                        palabras.add(t)
-
-    return sorted(list(palabras))
-
-def autocompletar(df, columnas, texto):
-    texto = normalizar(texto)
-    if len(texto) < 1:
-        return []
-
-    dicc = generar_diccionario_autocompletado(df, columnas)
-    sugerencias = [p for p in dicc if p.startswith(texto)]
-    return sugerencias[:12]
-
-# ------------------------------------------------------------
-# DECODIFICACIÓN DE CÓDIGOS DE BARRA
-# ------------------------------------------------------------
-
-def decodificar_codigo_barras(cadena):
-    s = cadena.replace("!!", "!").replace("¡", "!").replace("//", "/")
-    partes = re.split(r"[!/]", s)
-    partes = [p.strip() for p in partes if p.strip()]
-
-    if not partes:
-        return None, None, None
-
-    articulo = partes[0]
-    color = None
-    talle = None
-
-    if len(partes) == 1:
-        return articulo, color, talle
-
-    ultimo = partes[-1]
-
-    if re.fullmatch(r"\d+(\.\d+)?", ultimo):
-        talle = ultimo
-        if len(partes) >= 3:
-            color = " ".join(partes[1:-1])
-    else:
-        color = " ".join(partes[1:])
-
-    return articulo, color, talle
-
-# ------------------------------------------------------------
-# DETECTAR INTENCIÓN
-# ------------------------------------------------------------
-
-def detectar_intencion(texto, columnas, df):
-    tokens = texto.split()
-
-    # Talle
-    if any(re.fullmatch(r"\d{1,2}(\.\d+)?", t) for t in tokens):
-        return {"tipo": "talle", "tokens": tokens}
-
-    # Rango de precios
-    if "entre" in texto and "y" in texto:
-        return {"tipo": "rango_precio", "tokens": tokens}
-
-    # Marca
-    if columnas["marca"]:
-        marcas = df[columnas["marca"]].astype(str).str.lower().unique()
-        for t in tokens:
-            if t in marcas:
-                return {"tipo": "marca", "tokens": tokens}
-
-    # Rubro
-    if columnas["rubro"]:
-        rubros = df[columnas["rubro"]].astype(str).str.lower().unique()
-        for t in tokens:
-            if t in rubros:
-                return {"tipo": "rubro", "tokens": tokens}
-
-    # Color
-    if columnas["color"]:
-        colores = df[columnas["color"]].astype(str).str.lower().unique()
-        for t in tokens:
-            if t in colores:
-                return {"tipo": "color", "tokens": tokens}
-
-    # Mixto
-    if len(tokens) > 1:
-        return {"tipo": "mixto", "tokens": tokens}
-
-    return {"tipo": "texto", "tokens": tokens}
-
-# ------------------------------------------------------------
-# GENERAR RESUMEN INTELIGENTE
-# ------------------------------------------------------------
-
-def generar_resumen(df, columnas):
-    resumen = {}
-
-    resumen["cant_articulos"] = df[columnas["codigo"]].nunique() if columnas["codigo"] else len(df)
-    resumen["unidades_totales"] = int(df[columnas["stock"]].apply(parse_numero).sum()) if columnas["stock"] else None
-    resumen["valorizado_total"] = float(df[columnas["valorizado"]].apply(parse_numero).sum()) if columnas["valorizado"] else None
-
-    if columnas["publico"]:
-        precios = df[columnas["publico"]].apply(parse_numero)
-        resumen["precio_min"] = float(precios.min())
-        resumen["precio_max"] = float(precios.max())
+        precios = precios[precios > 0]  # FIX: evita comparar float con str
+        if len(precios) > 0:
+            resumen["precio_min"] = float(precios.min())
+            resumen["precio_max"] = float(precios.max())
+        else:
+            resumen["precio_min"] = None
+            resumen["precio_max"] = None
 
     if columnas["rubro"]:
         resumen["rubros"] = sorted(set(df[columnas["rubro"]].astype(str)))
@@ -582,14 +406,12 @@ def procesar_pregunta(df, pregunta):
                 df_filtrado[columnas["talle"]].astype(str).str.contains(numero_talle, na=False)
             ]
     else:
-        # Búsqueda general usando __search si existe
         if "__search" in df_filtrado.columns:
             for t in tokens:
                 df_filtrado = df_filtrado[
                     df_filtrado["__search"].astype(str).str.contains(t, na=False)
                 ]
         else:
-            # Fallback: recorrer columnas
             for t in tokens:
                 mask = False
                 for col in columnas.values():
@@ -612,8 +434,4 @@ def procesar_pregunta(df, pregunta):
             "voz": "Resumen generado para tu consulta."
         })
 
-    # --------------------------------------------------------
-    # SIN RESULTADOS
-    # --------------------------------------------------------
     return {"tipo": "lista", "items": [], "voz": "No encontré resultados."}
-
