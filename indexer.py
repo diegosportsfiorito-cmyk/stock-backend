@@ -1,12 +1,6 @@
-# ===== INDEXER UNIVERSAL v2.0 PRO =====
-# Incluye:
-# - Decodificación robusta de códigos de barra
-# - Resumen inteligente (marca, talle, rubro, color, mixto)
-# - Consultas por rango (A)
-# - Autocompletado
-# - Búsqueda universal
-# - Anti-NaN
-# - Preparado para dashboard
+# ===== INDEXER UNIVERSAL v3.0 PRO =====
+# Optimizado para búsquedas reales, coincidencias parciales,
+# talles, plural/singular y consultas naturales.
 
 import pandas as pd
 import re
@@ -51,7 +45,7 @@ def limpiar_nan_en_objeto(obj):
     return limpiar_nan_en_valor(obj)
 
 # ------------------------------------------------------------
-# DETECTAR COLUMNA DE CÓDIGO (ROBUSTO)
+# DETECTAR COLUMNA DE CÓDIGO
 # ------------------------------------------------------------
 
 def detectar_columna_codigo(df):
@@ -95,9 +89,8 @@ def detectar_columna_descripcion(df):
         return max(puntajes, key=puntajes.get)
 
     return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
-
 # ------------------------------------------------------------
-# DECODIFICACIÓN ROBUSTA DE CÓDIGOS DE BARRA
+# DECODIFICACIÓN DE CÓDIGOS DE BARRA
 # ------------------------------------------------------------
 
 def decodificar_codigo_barras(cadena):
@@ -127,7 +120,7 @@ def decodificar_codigo_barras(cadena):
     return articulo, color, talle
 
 # ------------------------------------------------------------
-# DETECTAR INTENCIÓN DEL USUARIO
+# DETECTAR INTENCIÓN
 # ------------------------------------------------------------
 
 def detectar_intencion(texto, columnas, df):
@@ -167,36 +160,6 @@ def detectar_intencion(texto, columnas, df):
         return {"tipo": "mixto", "tokens": tokens}
 
     return {"tipo": "texto", "tokens": tokens}
-
-# ------------------------------------------------------------
-# GENERAR RESUMEN INTELIGENTE
-# ------------------------------------------------------------
-
-def generar_resumen(df, columnas):
-    resumen = {}
-
-    resumen["cant_articulos"] = df[columnas["codigo"]].nunique() if columnas["codigo"] else len(df)
-    resumen["unidades_totales"] = int(df[columnas["stock"]].apply(parse_numero).sum()) if columnas["stock"] else None
-    resumen["valorizado_total"] = float(df[columnas["valorizado"]].apply(parse_numero).sum()) if columnas["valorizado"] else None
-
-    if columnas["publico"]:
-        precios = df[columnas["publico"]].apply(parse_numero)
-        resumen["precio_min"] = float(precios.min())
-        resumen["precio_max"] = float(precios.max())
-
-    if columnas["rubro"]:
-        resumen["rubros"] = sorted(set(df[columnas["rubro"]].astype(str)))
-
-    if columnas["color"]:
-        resumen["colores"] = sorted(set(df[columnas["color"]].astype(str)))
-
-    if columnas["talle"]:
-        resumen["talles"] = sorted(set(df[columnas["talle"]].astype(str)))
-
-    if columnas["marca"]:
-        resumen["marcas"] = sorted(set(df[columnas["marca"]].astype(str)))
-
-    return resumen
 
 # ------------------------------------------------------------
 # AGRUPACIÓN POR MODELO
@@ -270,9 +233,8 @@ def autocompletar(df, columnas, texto):
     dicc = generar_diccionario_autocompletado(df, columnas)
     sugerencias = [p for p in dicc if p.startswith(texto)]
     return sugerencias[:12]
-
 # ------------------------------------------------------------
-# PROCESAR PREGUNTA PRINCIPAL
+# PROCESAR PREGUNTA PRINCIPAL (OPTIMIZADO)
 # ------------------------------------------------------------
 
 def procesar_pregunta(df, pregunta):
@@ -386,16 +348,38 @@ def procesar_pregunta(df, pregunta):
                 })
 
     # --------------------------------------------------------
-    # RESUMEN INTELIGENTE (marca, talle, rubro, color, mixto)
+    # TOKENS ÚTILES + USO DE __search
     # --------------------------------------------------------
+    stopwords = {"que", "qué", "hay", "en", "de", "el", "la", "los", "las", "un", "una", "unos", "unas", "stock"}
+    tokens = [t for t in intent["tokens"] if t not in stopwords]
+
+    if not tokens:
+        tokens = [pregunta_norm]
+
     df_filtrado = df.copy()
 
-    for t in intent["tokens"]:
-        mask = False
-        for col in columnas.values():
-            if col:
-                mask = mask | df[col].astype(str).str.lower().str.contains(t)
-        df_filtrado = df_filtrado[mask]
+    # Caso especial: búsqueda por talle
+    if intent["tipo"] == "talle" and columnas["talle"]:
+        numero_talle = next((t for t in tokens if re.fullmatch(r"\d{1,2}(\.\d+)?", t)), None)
+        if numero_talle:
+            df_filtrado = df_filtrado[
+                df_filtrado[columnas["talle"]].astype(str).str.contains(numero_talle, na=False)
+            ]
+    else:
+        # Búsqueda general usando __search
+        if "__search" in df_filtrado.columns:
+            for t in tokens:
+                df_filtrado = df_filtrado[
+                    df_filtrado["__search"].astype(str).str.contains(t, na=False)
+                ]
+        else:
+            # Fallback
+            for t in tokens:
+                mask = False
+                for col in columnas.values():
+                    if col:
+                        mask = mask | df_filtrado[col].astype(str).str.lower().str.contains(t)
+                df_filtrado = df_filtrado[mask]
 
     if not df_filtrado.empty:
         resumen = generar_resumen(df_filtrado, columnas)
@@ -412,9 +396,4 @@ def procesar_pregunta(df, pregunta):
             "voz": f"Resumen generado para tu consulta."
         })
 
-    # --------------------------------------------------------
-    # SIN RESULTADOS
-    # --------------------------------------------------------
     return {"tipo": "lista", "items": [], "voz": "No encontré resultados."}
-
-# ===== FIN INDEXER UNIVERSAL v2.0 PRO =====
