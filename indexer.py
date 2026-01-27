@@ -350,7 +350,8 @@ def procesar_pregunta(df, pregunta):
     # --------------------------------------------------------
     # TOKENS ÚTILES + USO DE __search
     # --------------------------------------------------------
-    stopwords = {"que", "qué", "hay", "en", "de", "el", "la", "los", "las", "un", "una", "unos", "unas", "stock"}
+    stopwords = {"que", "qué", "hay", "en", "de", "el", "la", "los", "las", "un", "una", "unos", "unas", "stock", "dime","decime","mostrame","mostra","busca","buscar"}
+    
     tokens = [t for t in intent["tokens"] if t not in stopwords]
 
     if not tokens:
@@ -397,3 +398,4 @@ def procesar_pregunta(df, pregunta):
         })
 
     return {"tipo": "lista", "items": [], "voz": "No encontré resultados."}
+
