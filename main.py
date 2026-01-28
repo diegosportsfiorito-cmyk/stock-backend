@@ -1,21 +1,23 @@
 import os
 import json
 import pandas as pd
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from indexer import Indexer   # Usa el INDEXER v4.0 que te pasé
+
+from indexer import Indexer   # ✔ Import correcto del INDEXER v4.0
+
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
 # ============================================================
-# CONFIG FASTAPI
+# FASTAPI CONFIG
 # ============================================================
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Podés restringirlo si querés
+    allow_origins=["*"],        # Podés restringirlo si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,7 +45,6 @@ def load_excel_from_drive():
 
     service = build("drive", "v3", credentials=creds)
 
-    # ID del archivo Excel en Drive
     FILE_ID = os.getenv("DRIVE_FILE_ID")
 
     print(f"📂 Cargando desde Drive: {FILE_ID}")
@@ -58,8 +59,11 @@ def load_excel_from_drive():
 
     print("Columnas normalizadas:", df.columns.tolist())
 
-    # Info del archivo
-    metadata = service.files().get(fileId=FILE_ID, fields="id, name, mimeType, modifiedTime").execute()
+    metadata = service.files().get(
+        fileId=FILE_ID,
+        fields="id, name, mimeType, modifiedTime"
+    ).execute()
+
     print("Excel cargado. Fuente:", metadata)
 
     return df, metadata
@@ -83,7 +87,6 @@ async def query_stock(req: QueryRequest):
 
         result = indexer.query(question, solo_stock)
 
-        # Agregar metadata de fuente
         result["fuente"] = metadata
 
         return result
@@ -105,14 +108,9 @@ async def autocomplete(q: str):
     try:
         q = q.lower().strip()
 
-        # Tomamos la columna "texto" del indexer
         textos = indexer.df["texto"].tolist()
 
-        sugerencias = sorted(
-            {t for t in textos if q in t}  # coincidencias parciales
-        )
-
-        # Limitar a 10 sugerencias
+        sugerencias = sorted({t for t in textos if q in t})
         sugerencias = sugerencias[:10]
 
         return {"sugerencias": sugerencias}
@@ -126,4 +124,7 @@ async def autocomplete(q: str):
 # ============================================================
 @app.get("/")
 async def root():
-    return {"status": "OK", "message": "Backend Stock IA PRO v4.0 listo."}
+    return {
+        "status": "OK",
+        "message": "Backend Stock IA PRO v4.0 listo."
+    }
