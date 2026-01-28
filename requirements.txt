@@ -4,15 +4,18 @@ requests
 python-dotenv
 pandas
 numpy
-openpyxl
+
+# Excel
+xlrd==2.0.1
+openpyxl>=3.1.5
+
+# Google Drive
 google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+
+# Otros
 PyPDF2
 pytesseract
 Pillow
-xlrd==2.0.1
-openpyxl==3.1.2
-openpyxl==3.1.5
-openpyxl>=3.1.5
