@@ -19,3 +19,4 @@ google-auth-httplib2
 PyPDF2
 pytesseract
 Pillow
+# force rebuild
