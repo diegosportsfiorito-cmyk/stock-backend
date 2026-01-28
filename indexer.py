@@ -7,6 +7,8 @@
 # - Coincidencia por similitud (levenshtein light)
 # - Mantiene: códigos, talles, rangos, resumen, agrupado, autocomplete
 
+print(">>> INDEXER v3.5 CARGADO <<<")
+
 import pandas as pd
 import re
 import math
@@ -561,3 +563,4 @@ def procesar_pregunta(df, pregunta):
         })
 
     return {"tipo": "lista", "items": [], "voz": "No encontré resultados."}
+
