@@ -1,10 +1,11 @@
-# ===== INDEXER UNIVERSAL v3.2 PRO =====
+# ===== INDEXER UNIVERSAL v3.3 PRO =====
 # Optimizado para:
 # - Búsqueda natural (dime, decime, mostrame, etc.)
 # - Coincidencias parciales con __search
 # - Talles, rubros, marcas, colores
 # - Códigos de barra y códigos exactos
 # - Resumen para dashboard
+# - FIX: detección correcta de columna de descripción
 
 import pandas as pd
 import re
@@ -61,10 +62,16 @@ def detectar_columna_codigo(df):
     return None
 
 # ------------------------------------------------------------
-# DETECTAR COLUMNA DE DESCRIPCIÓN
+# DETECTAR COLUMNA DE DESCRIPCIÓN (FIX DEFINITIVO)
 # ------------------------------------------------------------
 
 def detectar_columna_descripcion(df):
+    # 1) Siempre usar la primera columna que empiece con "descripcion"
+    for c in df.columns:
+        if c.lower().startswith("descripcion"):
+            return c
+
+    # 2) Si no existe, usar heurística
     keywords = [
         "pantufla","pantuflas","pantu",
         "zapatilla","zapatillas","zapa",
@@ -173,7 +180,7 @@ def generar_resumen(df, columnas):
 
     if columnas["publico"]:
         precios = df[columnas["publico"]].apply(parse_numero)
-        precios = precios[precios > 0]  # FIX: evita comparar float con str
+        precios = precios[precios > 0]
         if len(precios) > 0:
             resumen["precio_min"] = float(precios.min())
             resumen["precio_max"] = float(precios.max())
@@ -286,6 +293,7 @@ def procesar_pregunta(df, pregunta):
         "valorizado": next((c for c in df.columns if "valoriz" in c.lower()), None),
     }
 
+    # FIX DEFINITIVO: columna correcta de descripción
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
