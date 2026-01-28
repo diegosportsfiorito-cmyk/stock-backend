@@ -1,279 +1,129 @@
-import io
 import os
+import json
 import pandas as pd
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-
-from indexer import procesar_pregunta, autocompletar
-from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
+from pydantic import BaseModel
+from indexer import Indexer   # Usa el INDEXER v4.0 que te pasé
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
 
 # ============================================================
-# CONFIG
+# CONFIG FASTAPI
 # ============================================================
-
-DRIVE_FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
-
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],   # Podés restringirlo si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ============================================================
+# MODELO DE REQUEST
+# ============================================================
+class QueryRequest(BaseModel):
+    question: str
+    solo_stock: bool = False
+
+# ============================================================
 # CARGA DESDE GOOGLE DRIVE
 # ============================================================
+def load_excel_from_drive():
+    print(">>> INDEXER v4.0 CARGADO <<<")
 
-def cargar_excel_desde_drive():
-    try:
-        archivos = listar_archivos_en_carpeta(DRIVE_FOLDER_ID)
-        if not archivos:
-            print("⚠️ No se encontraron archivos en la carpeta de Drive.")
-            return None, None
+    SERVICE_ACCOUNT_FILE = "service_account.json"
+    SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-        archivos.sort(key=lambda x: x.get("modifiedTime", ""), reverse=True)
-        archivo = archivos[0]
+    creds = service_account.Credentials.from_service_account_file(
+        SERVICE_ACCOUNT_FILE, scopes=SCOPES
+    )
 
-        file_id = archivo["id"]
-        nombre = archivo["name"]
-        mime = archivo.get("mimeType", "")
-        print(f"📂 Cargando desde Drive: {nombre} ({file_id})")
+    service = build("drive", "v3", credentials=creds)
 
-        contenido = descargar_archivo_por_id(file_id)
-        nombre_lower = nombre.lower()
+    # ID del archivo Excel en Drive
+    FILE_ID = os.getenv("DRIVE_FILE_ID")
 
-        if nombre_lower.endswith(".xlsx"):
-            df = pd.read_excel(io.BytesIO(contenido), engine="openpyxl")
-        elif nombre_lower.endswith(".xls"):
-            try:
-                df = pd.read_excel(io.BytesIO(contenido), engine="xlrd")
-            except ImportError:
-                raise Exception("Falta xlrd para leer archivos .xls. Agregá 'xlrd==2.0.1' a requirements.txt")
-        else:
-            raise Exception(f"Formato no soportado desde Drive: {nombre} ({mime})")
+    print(f"📂 Cargando desde Drive: {FILE_ID}")
 
-        fuente = {
-            "origen": "drive",
-            "id": file_id,
-            "name": nombre,
-            "mimeType": mime,
-            "modifiedTime": archivo.get("modifiedTime", "")
-        }
-        return df, fuente
+    request = service.files().get_media(fileId=FILE_ID)
+    file = request.execute()
 
-    except Exception as e:
-        print(f"⚠️ Error cargando desde Drive: {e}")
-        return None, None
+    with open("stock.xlsx", "wb") as f:
+        f.write(file)
 
-# ============================================================
-# CARGA DESDE /data (FALLBACK)
-# ============================================================
-
-def cargar_excel_desde_data():
-    carpeta = "data"
-
-    if not os.path.exists(carpeta):
-        os.makedirs(carpeta)
-        print("⚠️ Carpeta /data creada automáticamente. No había archivos Excel.")
-        return None, None
-
-    archivos = [f for f in os.listdir(carpeta) if f.lower().endswith((".xls", ".xlsx"))]
-    if not archivos:
-        print("⚠️ No hay archivos Excel en /data.")
-        return None, None
-
-    archivos.sort(key=lambda x: os.path.getmtime(os.path.join(carpeta, x)), reverse=True)
-    archivo = archivos[0]
-    ruta = os.path.join(carpeta, archivo)
-
-    with open(ruta, "rb") as f:
-        contenido = f.read()
-
-    nombre_lower = archivo.lower()
-    if nombre_lower.endswith(".xlsx"):
-        df = pd.read_excel(io.BytesIO(contenido), engine="openpyxl")
-    elif nombre_lower.endswith(".xls"):
-        try:
-            df = pd.read_excel(io.BytesIO(contenido), engine="xlrd")
-        except ImportError:
-            raise Exception("Falta xlrd para leer archivos .xls. Agregá 'xlrd==2.0.1' a requirements.txt")
-    else:
-        raise Exception(f"Formato no soportado en /data: {archivo}")
-
-    fuente = {
-        "origen": "data",
-        "name": archivo,
-        "path": ruta
-    }
-    return df, fuente
-
-# ============================================================
-# NORMALIZACIÓN DE ENCABEZADOS
-# ============================================================
-
-def normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
-    columnas_originales = [str(c).strip().lower() for c in df.columns]
-
-    mapping = {
-        "descripción": "descripcion",
-        "descripcion": "descripcion",
-        "artículo": "codigo",
-        "articulo": "codigo",
-        "talle": "talle",
-        "cantidad": "stock",
-        "lista1": "precio",
-        "valorizado lista1": "valorizado",
-        "valorizado": "valorizado",
-    }
-
-    columnas_finales = []
-    contador_desc = 1
-
-    for col in columnas_originales:
-        if col in mapping:
-            columnas_finales.append(mapping[col])
-        elif col in ("descripción", "descripcion"):
-            if contador_desc == 1:
-                columnas_finales.append("descripcion")
-            else:
-                columnas_finales.append(f"descripcion_extra_{contador_desc}")
-            contador_desc += 1
-        else:
-            columnas_finales.append(col.replace(" ", "_"))
-
-    df.columns = columnas_finales
-
-    if "codigo" in df.columns:
-        df["codigo"] = df["codigo"].astype(str).str.strip()
-
-    if "descripcion" in df.columns:
-        df["descripcion"] = df["descripcion"].astype(str).str.strip()
-
-    if "talle" in df.columns:
-        df["talle"] = df["talle"].astype(str).str.strip()
-
-    if "stock" in df.columns:
-        df["stock"] = pd.to_numeric(df["stock"], errors="coerce").fillna(0)
-
-    if "precio" in df.columns:
-        df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0)
-
-    if "valorizado" in df.columns:
-        df["valorizado"] = pd.to_numeric(df["valorizado"], errors="coerce").fillna(0)
+    df = pd.read_excel("stock.xlsx")
 
     print("Columnas normalizadas:", df.columns.tolist())
-    return df
+
+    # Info del archivo
+    metadata = service.files().get(fileId=FILE_ID, fields="id, name, mimeType, modifiedTime").execute()
+    print("Excel cargado. Fuente:", metadata)
+
+    return df, metadata
 
 # ============================================================
-# CARGA GLOBAL AL INICIAR
+# CARGAR EXCEL AL INICIAR
 # ============================================================
-
-def cargar_excel_global():
-    df, fuente = cargar_excel_desde_drive()
-
-    if df is None:
-        df, fuente = cargar_excel_desde_data()
-
-    if df is None:
-        print("⚠️ No se pudo cargar ningún Excel. Usando DataFrame vacío.")
-        return pd.DataFrame(), {"origen": "ninguno", "name": "SIN_ARCHIVO"}
-
-    df = normalizar_df(df)
-    return df, fuente
-
-df, fuente_excel = cargar_excel_global()
-print(f"Excel cargado. Fuente: {fuente_excel}")
+df, metadata = load_excel_from_drive()
+indexer = Indexer(df)
 
 # ============================================================
 # ENDPOINT PRINCIPAL /query
 # ============================================================
-
 @app.post("/query")
-async def query(data: dict):
+async def query_stock(req: QueryRequest):
     try:
-        pregunta = data.get("question", "")
+        question = req.question.strip()
+        solo_stock = req.solo_stock
 
-        if df.empty:
-            return {
-                "tipo": "mensaje",
-                "mensaje": "No hay datos de stock cargados en el servidor.",
-                "voz": "No hay datos de stock cargados en el servidor.",
-                "fuente": fuente_excel
-            }
+        print(f">>> Consulta recibida: {question}")
 
-        resultado = procesar_pregunta(df, pregunta)
+        result = indexer.query(question, solo_stock)
 
-        if isinstance(resultado, dict):
-            resultado.setdefault("fuente", fuente_excel)
-        else:
-            resultado = {
-                "tipo": "mensaje",
-                "mensaje": "Respuesta no válida del indexer.",
-                "voz": "Ocurrió un error procesando la consulta.",
-                "fuente": fuente_excel
-            }
+        # Agregar metadata de fuente
+        result["fuente"] = metadata
 
-        return resultado
+        return result
 
     except Exception as e:
+        print("ERROR en /query:", e)
         return {
-            "tipo": "mensaje",
-            "mensaje": "Ocurrió un error procesando la consulta.",
-            "voz": "Ocurrió un error procesando la consulta.",
-            "error": str(e),
-            "fuente": fuente_excel
+            "tipo": "lista",
+            "items": [],
+            "voz": "Error procesando la consulta.",
+            "fuente": metadata
         }
 
 # ============================================================
-# AUTOCOMPLETE
+# ENDPOINT /autocomplete
 # ============================================================
-
 @app.get("/autocomplete")
-async def autocomplete_endpoint(q: str):
+async def autocomplete(q: str):
     try:
-        if df.empty:
-            return {"sugerencias": [], "error": "No hay datos cargados."}
+        q = q.lower().strip()
 
-        columnas = {
-            "descripcion": "descripcion" if "descripcion" in df.columns else None,
-            "marca": "marca" if "marca" in df.columns else None,
-            "rubro": "rubro" if "rubro" in df.columns else None,
-            "color": "color" if "color" in df.columns else None,
-            "codigo": "codigo" if "codigo" in df.columns else None,
-            "talle": "talle" if "talle" in df.columns else None
-        }
+        # Tomamos la columna "texto" del indexer
+        textos = indexer.df["texto"].tolist()
 
-        sugerencias = autocompletar(df, columnas, q)
+        sugerencias = sorted(
+            {t for t in textos if q in t}  # coincidencias parciales
+        )
+
+        # Limitar a 10 sugerencias
+        sugerencias = sugerencias[:10]
+
         return {"sugerencias": sugerencias}
 
     except Exception as e:
-        return {"sugerencias": [], "error": str(e)}
+        print("ERROR en /autocomplete:", e)
+        return {"sugerencias": []}
 
 # ============================================================
-# DASHBOARD GLOBAL
+# ROOT
 # ============================================================
-
-@app.get("/dashboard/global")
-async def dashboard_global():
-    try:
-        if df.empty:
-            return {
-                "stock_total": 0,
-                "articulos": 0,
-                "fuente": fuente_excel
-            }
-
-        stock_total = int(df["stock"].sum()) if "stock" in df.columns else 0
-        articulos = df["codigo"].nunique() if "codigo" in df.columns else len(df)
-
-        return {
-            "stock_total": stock_total,
-            "articulos": articulos,
-            "fuente": fuente_excel
-        }
-
-    except Exception as e:
-        return {"error": str(e), "fuente": fuente_excel}
+@app.get("/")
+async def root():
+    return {"status": "OK", "message": "Backend Stock IA PRO v4.0 listo."}
