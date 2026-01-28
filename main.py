@@ -26,13 +26,17 @@ app.add_middleware(
 def cargar_excel_mas_reciente():
     carpeta = "data"
 
+    # Crear carpeta si no existe (Render no la crea)
     if not os.path.exists(carpeta):
-        raise Exception("La carpeta /data no existe en Render.")
-
+        os.makedirs(carpeta)
+        print("⚠️ Carpeta /data creada automáticamente. No había archivos Excel.")
+    
+    # Buscar archivos Excel
     archivos = [f for f in os.listdir(carpeta) if f.lower().endswith((".xls", ".xlsx"))]
 
     if not archivos:
-        raise Exception("No hay archivos Excel (.xls o .xlsx) en /data")
+        print("⚠️ No hay archivos Excel en /data. El backend arrancará igual con DF vacío.")
+        return pd.DataFrame(), "SIN_ARCHIVO"
 
     # Ordenar por fecha de modificación
     archivos.sort(key=lambda x: os.path.getmtime(os.path.join(carpeta, x)), reverse=True)
@@ -57,17 +61,17 @@ def cargar_excel_mas_reciente():
                 "Falta xlrd para leer archivos .xls. "
                 "Agregá 'xlrd==2.0.1' a requirements.txt"
             )
-
     else:
         raise Exception(f"Formato no soportado: {archivo}")
 
     # ========================================================
-    # NORMALIZACIÓN DE ENCABEZADOS (TU EXCEL TIENE REPETIDOS)
+    # NORMALIZACIÓN DE ENCABEZADOS (SEGÚN TU XLS REAL)
+    # Encabezados típicos:
+    # Descripción | Descripción | Artículo | Descripción | Descripción | Talle | Cantidad | LISTA1 | Valorizado LISTA1
     # ========================================================
 
     columnas_originales = [str(c).strip().lower() for c in df.columns]
 
-    # Mapeo inteligente basado en tu estructura real
     mapping = {
         "descripción": "descripcion",
         "descripcion": "descripcion",
@@ -86,8 +90,7 @@ def cargar_excel_mas_reciente():
     for col in columnas_originales:
         if col in mapping:
             columnas_finales.append(mapping[col])
-        elif col == "descripción" or col == "descripcion":
-            # Si hay varias columnas "Descripción", solo la primera es la real
+        elif col in ("descripción", "descripcion"):
             if contador_desc == 1:
                 columnas_finales.append("descripcion")
             else:
@@ -120,6 +123,7 @@ def cargar_excel_mas_reciente():
     if "valorizado" in df.columns:
         df["valorizado"] = pd.to_numeric(df["valorizado"], errors="coerce").fillna(0)
 
+    print("Columnas normalizadas:", df.columns.tolist())
     return df, archivo
 
 
@@ -136,12 +140,27 @@ print(f"Excel cargado correctamente: {archivo_fuente}")
 async def query(data: dict):
     try:
         pregunta = data.get("question", "")
+
+        if df.empty:
+            return {
+                "tipo": "mensaje",
+                "mensaje": "No hay datos de stock cargados en el servidor.",
+                "voz": "No hay datos de stock cargados en el servidor.",
+                "fuente": archivo_fuente
+            }
+
         resultado = procesar_pregunta(df, pregunta)
 
-        # Agregar siempre la fuente del archivo
-        resultado["fuente"] = {
-            "name": archivo_fuente
-        }
+        if isinstance(resultado, dict):
+            resultado.setdefault("fuente", {})
+            resultado["fuente"]["name"] = archivo_fuente
+        else:
+            resultado = {
+                "tipo": "mensaje",
+                "mensaje": "Respuesta no válida del indexer.",
+                "voz": "Ocurrió un error procesando la consulta.",
+                "fuente": {"name": archivo_fuente}
+            }
 
         return resultado
 
@@ -151,7 +170,7 @@ async def query(data: dict):
             "mensaje": "Ocurrió un error procesando la consulta.",
             "voz": "Ocurrió un error procesando la consulta.",
             "error": str(e),
-            "fuente": archivo_fuente
+            "fuente": {"name": archivo_fuente}
         }
 
 
@@ -162,6 +181,9 @@ async def query(data: dict):
 @app.get("/autocomplete")
 async def autocomplete_endpoint(q: str):
     try:
+        if df.empty:
+            return {"sugerencias": [], "error": "No hay datos cargados."}
+
         columnas = {
             "descripcion": "descripcion" if "descripcion" in df.columns else None,
             "marca": "marca" if "marca" in df.columns else None,
@@ -185,6 +207,13 @@ async def autocomplete_endpoint(q: str):
 @app.get("/dashboard/global")
 async def dashboard_global():
     try:
+        if df.empty:
+            return {
+                "stock_total": 0,
+                "articulos": 0,
+                "fuente": archivo_fuente
+            }
+
         stock_total = int(df["stock"].sum()) if "stock" in df.columns else 0
         articulos = df["codigo"].nunique() if "codigo" in df.columns else len(df)
 
