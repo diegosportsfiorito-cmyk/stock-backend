@@ -20,7 +20,7 @@ app.add_middleware(
 )
 
 # ============================================================
-# CARGA UNIVERSAL DE EXCEL (XLS + XLSX)
+# CARGA UNIVERSAL DE EXCEL (XLS + XLSX) + NORMALIZACIÓN
 # ============================================================
 
 def cargar_excel_mas_reciente():
@@ -61,6 +61,65 @@ def cargar_excel_mas_reciente():
     else:
         raise Exception(f"Formato no soportado: {archivo}")
 
+    # ========================================================
+    # NORMALIZACIÓN DE ENCABEZADOS (TU EXCEL TIENE REPETIDOS)
+    # ========================================================
+
+    columnas_originales = [str(c).strip().lower() for c in df.columns]
+
+    # Mapeo inteligente basado en tu estructura real
+    mapping = {
+        "descripción": "descripcion",
+        "descripcion": "descripcion",
+        "artículo": "codigo",
+        "articulo": "codigo",
+        "talle": "talle",
+        "cantidad": "stock",
+        "lista1": "precio",
+        "valorizado lista1": "valorizado",
+        "valorizado": "valorizado",
+    }
+
+    columnas_finales = []
+    contador_desc = 1
+
+    for col in columnas_originales:
+        if col in mapping:
+            columnas_finales.append(mapping[col])
+        elif col == "descripción" or col == "descripcion":
+            # Si hay varias columnas "Descripción", solo la primera es la real
+            if contador_desc == 1:
+                columnas_finales.append("descripcion")
+            else:
+                columnas_finales.append(f"descripcion_extra_{contador_desc}")
+            contador_desc += 1
+        else:
+            columnas_finales.append(col.replace(" ", "_"))
+
+    df.columns = columnas_finales
+
+    # ========================================================
+    # LIMPIEZA DE COLUMNAS CRÍTICAS
+    # ========================================================
+
+    if "codigo" in df.columns:
+        df["codigo"] = df["codigo"].astype(str).str.strip()
+
+    if "descripcion" in df.columns:
+        df["descripcion"] = df["descripcion"].astype(str).str.strip()
+
+    if "talle" in df.columns:
+        df["talle"] = df["talle"].astype(str).str.strip()
+
+    if "stock" in df.columns:
+        df["stock"] = pd.to_numeric(df["stock"], errors="coerce").fillna(0)
+
+    if "precio" in df.columns:
+        df["precio"] = pd.to_numeric(df["precio"], errors="coerce").fillna(0)
+
+    if "valorizado" in df.columns:
+        df["valorizado"] = pd.to_numeric(df["valorizado"], errors="coerce").fillna(0)
+
     return df, archivo
 
 
@@ -78,6 +137,12 @@ async def query(data: dict):
     try:
         pregunta = data.get("question", "")
         resultado = procesar_pregunta(df, pregunta)
+
+        # Agregar siempre la fuente del archivo
+        resultado["fuente"] = {
+            "name": archivo_fuente
+        }
+
         return resultado
 
     except Exception as e:
@@ -85,7 +150,8 @@ async def query(data: dict):
             "tipo": "mensaje",
             "mensaje": "Ocurrió un error procesando la consulta.",
             "voz": "Ocurrió un error procesando la consulta.",
-            "error": str(e)
+            "error": str(e),
+            "fuente": archivo_fuente
         }
 
 
@@ -97,13 +163,14 @@ async def query(data: dict):
 async def autocomplete_endpoint(q: str):
     try:
         columnas = {
-            "descripcion": None,
-            "marca": None,
-            "rubro": None,
-            "color": None,
-            "codigo": None,
-            "talle": None
+            "descripcion": "descripcion" if "descripcion" in df.columns else None,
+            "marca": "marca" if "marca" in df.columns else None,
+            "rubro": "rubro" if "rubro" in df.columns else None,
+            "color": "color" if "color" in df.columns else None,
+            "codigo": "codigo" if "codigo" in df.columns else None,
+            "talle": "talle" if "talle" in df.columns else None
         }
+
         sugerencias = autocompletar(df, columnas, q)
         return {"sugerencias": sugerencias}
 
@@ -112,31 +179,20 @@ async def autocomplete_endpoint(q: str):
 
 
 # ============================================================
-# DASHBOARD GLOBAL (OPCIONAL)
+# DASHBOARD GLOBAL
 # ============================================================
 
 @app.get("/dashboard/global")
 async def dashboard_global():
     try:
-        # Stock total
-        if "Stock" in df.columns:
-            stock_total = int(pd.to_numeric(df["Stock"], errors="coerce").sum())
-        else:
-            stock_total = 0
-
-        # Artículos únicos
-        if "Codigo" in df.columns:
-            articulos = df["Codigo"].nunique()
-        else:
-            articulos = len(df)
+        stock_total = int(df["stock"].sum()) if "stock" in df.columns else 0
+        articulos = df["codigo"].nunique() if "codigo" in df.columns else len(df)
 
         return {
             "stock_total": stock_total,
             "articulos": articulos,
-            "rubros": {},
-            "marcas": {},
-            "talles": {}
+            "fuente": archivo_fuente
         }
 
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "fuente": archivo_fuente}
