@@ -1,11 +1,11 @@
-# ===== INDEXER UNIVERSAL v3.3 PRO =====
-# Optimizado para:
-# - Búsqueda natural (dime, decime, mostrame, etc.)
-# - Coincidencias parciales con __search
-# - Talles, rubros, marcas, colores
-# - Códigos de barra y códigos exactos
-# - Resumen para dashboard
-# - FIX: detección correcta de columna de descripción
+# ===== INDEXER UNIVERSAL v3.4 PRO =====
+# Mejoras:
+# - Coincidencia flexible singular/plural
+# - Coincidencia por raíz (stemming simple)
+# - Detección correcta de columna de descripción
+# - Búsqueda natural mejorada
+# - Agrupación optimizada
+# - Autocomplete más inteligente
 
 import pandas as pd
 import re
@@ -20,6 +20,33 @@ def normalizar(texto):
         texto = str(texto)
     return texto.strip().lower()
 
+# ------------------------------------------------------------
+# STEMMING SIMPLE (para pantufla → pantufl, pantuflas → pantufl)
+# ------------------------------------------------------------
+
+def raiz(palabra):
+    palabra = normalizar(palabra)
+    palabra = re.sub(r"[áàä]", "a", palabra)
+    palabra = re.sub(r"[éèë]", "e", palabra)
+    palabra = re.sub(r"[íìï]", "i", palabra)
+    palabra = re.sub(r"[óòö]", "o", palabra)
+    palabra = re.sub(r"[úùü]", "u", palabra)
+
+    # Quitar plurales comunes
+    if palabra.endswith("es"):
+        palabra = palabra[:-2]
+    elif palabra.endswith("s"):
+        palabra = palabra[:-1]
+
+    # Quitar terminaciones comunes
+    palabra = re.sub(r"(ito|ita|itos|itas|on|ona|ones|onas)$", "", palabra)
+
+    return palabra
+
+# ------------------------------------------------------------
+# PARSE NUMÉRICO
+# ------------------------------------------------------------
+
 def parse_numero(valor):
     if pd.isna(valor):
         return 0
@@ -32,7 +59,7 @@ def parse_numero(valor):
         return 0
 
 # ------------------------------------------------------------
-# LIMPIEZA ANTI-NAN PARA JSON
+# LIMPIEZA ANTI-NAN
 # ------------------------------------------------------------
 
 def limpiar_nan_en_valor(v):
@@ -71,24 +98,21 @@ def detectar_columna_descripcion(df):
         if c.lower().startswith("descripcion"):
             return c
 
-    # 2) Si no existe, usar heurística
+    # 2) Heurística si no existe
     keywords = [
         "pantufla","pantuflas","pantu",
         "zapatilla","zapatillas","zapa",
         "remera","camiseta","buzo","campera",
-        "pantalon","pantalón","short",
-        "botin","botines","media","medias",
-        "guante","guantes","bolsa","boxeo",
-        "mochila","plush","avengers","marvel","slide","bermuda"
+        "pantalon","short","botin","media",
+        "guante","mochila","plush","avengers","marvel","slide","bermuda"
     ]
 
     columnas_prohibidas = ["rubro","marca","color","talle","cantidad","stock","precio","lista","valoriz"]
 
-    cols_norm = {c: c.lower().strip() for c in df.columns}
     puntajes = {}
 
     for col in df.columns:
-        nombre = cols_norm[col]
+        nombre = col.lower()
         if any(p in nombre for p in columnas_prohibidas):
             continue
 
@@ -99,7 +123,7 @@ def detectar_columna_descripcion(df):
     if puntajes and max(puntajes.values()) > 0:
         return max(puntajes, key=puntajes.get)
 
-    return max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
+    return df.columns[0]
 
 # ------------------------------------------------------------
 # DECODIFICACIÓN DE CÓDIGOS DE BARRA
@@ -168,7 +192,7 @@ def detectar_intencion(texto, columnas, df):
     return {"tipo": "texto", "tokens": tokens}
 
 # ------------------------------------------------------------
-# GENERAR RESUMEN INTELIGENTE
+# RESUMEN
 # ------------------------------------------------------------
 
 def generar_resumen(df, columnas):
@@ -272,7 +296,9 @@ def autocompletar(df, columnas, texto):
         return []
 
     dicc = generar_diccionario_autocompletado(df, columnas)
-    sugerencias = [p for p in dicc if p.startswith(texto)]
+    texto_r = raiz(texto)
+
+    sugerencias = [p for p in dicc if raiz(p).startswith(texto_r)]
     return sugerencias[:12]
 
 # ------------------------------------------------------------
@@ -281,6 +307,7 @@ def autocompletar(df, columnas, texto):
 
 def procesar_pregunta(df, pregunta):
     pregunta_norm = normalizar(pregunta)
+    pregunta_raiz = raiz(pregunta_norm)
 
     columnas = {
         "rubro": next((c for c in df.columns if "rubro" in c.lower()), None),
@@ -293,7 +320,6 @@ def procesar_pregunta(df, pregunta):
         "valorizado": next((c for c in df.columns if "valoriz" in c.lower()), None),
     }
 
-    # FIX DEFINITIVO: columna correcta de descripción
     col_desc = detectar_columna_descripcion(df)
     columnas["descripcion"] = col_desc
 
@@ -391,7 +417,7 @@ def procesar_pregunta(df, pregunta):
                 })
 
     # --------------------------------------------------------
-    # TOKENS ÚTILES + USO DE __search
+    # TOKENS ÚTILES + STEMMING FLEXIBLE
     # --------------------------------------------------------
     stopwords = {
         "que","qué","hay","en","de","el","la","los","las",
@@ -400,9 +426,11 @@ def procesar_pregunta(df, pregunta):
     }
 
     tokens = [t for t in intent["tokens"] if t not in stopwords]
+    tokens_raiz = [raiz(t) for t in tokens]
 
     if not tokens:
         tokens = [pregunta_norm]
+        tokens_raiz = [pregunta_raiz]
 
     df_filtrado = df.copy()
 
@@ -414,18 +442,12 @@ def procesar_pregunta(df, pregunta):
                 df_filtrado[columnas["talle"]].astype(str).str.contains(numero_talle, na=False)
             ]
     else:
-        if "__search" in df_filtrado.columns:
-            for t in tokens:
-                df_filtrado = df_filtrado[
-                    df_filtrado["__search"].astype(str).str.contains(t, na=False)
-                ]
-        else:
-            for t in tokens:
-                mask = False
-                for col in columnas.values():
-                    if col:
-                        mask = mask | df_filtrado[col].astype(str).str.lower().str.contains(t)
-                df_filtrado = df_filtrado[mask]
+        for t_r in tokens_raiz:
+            mask = False
+            for col in columnas.values():
+                if col:
+                    mask = mask | df_filtrado[col].astype(str).str.lower().apply(lambda x: raiz(x).find(t_r) != -1)
+            df_filtrado = df_filtrado[mask]
 
     if not df_filtrado.empty:
         resumen = generar_resumen(df_filtrado, columnas)
