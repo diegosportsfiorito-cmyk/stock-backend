@@ -3,11 +3,15 @@ import os
 import pandas as pd
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from indexer import procesar_pregunta, autocompletar
+from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 # ============================================================
-# FASTAPI + CORS
+# CONFIG
 # ============================================================
+
+DRIVE_FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
 app = FastAPI()
 
@@ -20,25 +24,67 @@ app.add_middleware(
 )
 
 # ============================================================
-# CARGA UNIVERSAL DE EXCEL (XLS + XLSX) + NORMALIZACIÓN
+# CARGA DESDE GOOGLE DRIVE
 # ============================================================
 
-def cargar_excel_mas_reciente():
+def cargar_excel_desde_drive():
+    try:
+        archivos = listar_archivos_en_carpeta(DRIVE_FOLDER_ID)
+        if not archivos:
+            print("⚠️ No se encontraron archivos en la carpeta de Drive.")
+            return None, None
+
+        archivos.sort(key=lambda x: x.get("modifiedTime", ""), reverse=True)
+        archivo = archivos[0]
+
+        file_id = archivo["id"]
+        nombre = archivo["name"]
+        mime = archivo.get("mimeType", "")
+        print(f"📂 Cargando desde Drive: {nombre} ({file_id})")
+
+        contenido = descargar_archivo_por_id(file_id)
+        nombre_lower = nombre.lower()
+
+        if nombre_lower.endswith(".xlsx"):
+            df = pd.read_excel(io.BytesIO(contenido), engine="openpyxl")
+        elif nombre_lower.endswith(".xls"):
+            try:
+                df = pd.read_excel(io.BytesIO(contenido), engine="xlrd")
+            except ImportError:
+                raise Exception("Falta xlrd para leer archivos .xls. Agregá 'xlrd==2.0.1' a requirements.txt")
+        else:
+            raise Exception(f"Formato no soportado desde Drive: {nombre} ({mime})")
+
+        fuente = {
+            "origen": "drive",
+            "id": file_id,
+            "name": nombre,
+            "mimeType": mime,
+            "modifiedTime": archivo.get("modifiedTime", "")
+        }
+        return df, fuente
+
+    except Exception as e:
+        print(f"⚠️ Error cargando desde Drive: {e}")
+        return None, None
+
+# ============================================================
+# CARGA DESDE /data (FALLBACK)
+# ============================================================
+
+def cargar_excel_desde_data():
     carpeta = "data"
 
-    # Crear carpeta si no existe (Render no la crea)
     if not os.path.exists(carpeta):
         os.makedirs(carpeta)
         print("⚠️ Carpeta /data creada automáticamente. No había archivos Excel.")
-    
-    # Buscar archivos Excel
+        return None, None
+
     archivos = [f for f in os.listdir(carpeta) if f.lower().endswith((".xls", ".xlsx"))]
-
     if not archivos:
-        print("⚠️ No hay archivos Excel en /data. El backend arrancará igual con DF vacío.")
-        return pd.DataFrame(), "SIN_ARCHIVO"
+        print("⚠️ No hay archivos Excel en /data.")
+        return None, None
 
-    # Ordenar por fecha de modificación
     archivos.sort(key=lambda x: os.path.getmtime(os.path.join(carpeta, x)), reverse=True)
     archivo = archivos[0]
     ruta = os.path.join(carpeta, archivo)
@@ -46,30 +92,29 @@ def cargar_excel_mas_reciente():
     with open(ruta, "rb") as f:
         contenido = f.read()
 
-    nombre = archivo.lower()
-
-    # XLSX → openpyxl
-    if nombre.endswith(".xlsx"):
+    nombre_lower = archivo.lower()
+    if nombre_lower.endswith(".xlsx"):
         df = pd.read_excel(io.BytesIO(contenido), engine="openpyxl")
-
-    # XLS → xlrd
-    elif nombre.endswith(".xls"):
+    elif nombre_lower.endswith(".xls"):
         try:
             df = pd.read_excel(io.BytesIO(contenido), engine="xlrd")
         except ImportError:
-            raise Exception(
-                "Falta xlrd para leer archivos .xls. "
-                "Agregá 'xlrd==2.0.1' a requirements.txt"
-            )
+            raise Exception("Falta xlrd para leer archivos .xls. Agregá 'xlrd==2.0.1' a requirements.txt")
     else:
-        raise Exception(f"Formato no soportado: {archivo}")
+        raise Exception(f"Formato no soportado en /data: {archivo}")
 
-    # ========================================================
-    # NORMALIZACIÓN DE ENCABEZADOS (SEGÚN TU XLS REAL)
-    # Encabezados típicos:
-    # Descripción | Descripción | Artículo | Descripción | Descripción | Talle | Cantidad | LISTA1 | Valorizado LISTA1
-    # ========================================================
+    fuente = {
+        "origen": "data",
+        "name": archivo,
+        "path": ruta
+    }
+    return df, fuente
 
+# ============================================================
+# NORMALIZACIÓN DE ENCABEZADOS
+# ============================================================
+
+def normalizar_df(df: pd.DataFrame) -> pd.DataFrame:
     columnas_originales = [str(c).strip().lower() for c in df.columns]
 
     mapping = {
@@ -101,10 +146,6 @@ def cargar_excel_mas_reciente():
 
     df.columns = columnas_finales
 
-    # ========================================================
-    # LIMPIEZA DE COLUMNAS CRÍTICAS
-    # ========================================================
-
     if "codigo" in df.columns:
         df["codigo"] = df["codigo"].astype(str).str.strip()
 
@@ -124,13 +165,27 @@ def cargar_excel_mas_reciente():
         df["valorizado"] = pd.to_numeric(df["valorizado"], errors="coerce").fillna(0)
 
     print("Columnas normalizadas:", df.columns.tolist())
-    return df, archivo
+    return df
 
+# ============================================================
+# CARGA GLOBAL AL INICIAR
+# ============================================================
 
-# Cargar Excel al iniciar el servidor
-df, archivo_fuente = cargar_excel_mas_reciente()
-print(f"Excel cargado correctamente: {archivo_fuente}")
+def cargar_excel_global():
+    df, fuente = cargar_excel_desde_drive()
 
+    if df is None:
+        df, fuente = cargar_excel_desde_data()
+
+    if df is None:
+        print("⚠️ No se pudo cargar ningún Excel. Usando DataFrame vacío.")
+        return pd.DataFrame(), {"origen": "ninguno", "name": "SIN_ARCHIVO"}
+
+    df = normalizar_df(df)
+    return df, fuente
+
+df, fuente_excel = cargar_excel_global()
+print(f"Excel cargado. Fuente: {fuente_excel}")
 
 # ============================================================
 # ENDPOINT PRINCIPAL /query
@@ -146,20 +201,19 @@ async def query(data: dict):
                 "tipo": "mensaje",
                 "mensaje": "No hay datos de stock cargados en el servidor.",
                 "voz": "No hay datos de stock cargados en el servidor.",
-                "fuente": archivo_fuente
+                "fuente": fuente_excel
             }
 
         resultado = procesar_pregunta(df, pregunta)
 
         if isinstance(resultado, dict):
-            resultado.setdefault("fuente", {})
-            resultado["fuente"]["name"] = archivo_fuente
+            resultado.setdefault("fuente", fuente_excel)
         else:
             resultado = {
                 "tipo": "mensaje",
                 "mensaje": "Respuesta no válida del indexer.",
                 "voz": "Ocurrió un error procesando la consulta.",
-                "fuente": {"name": archivo_fuente}
+                "fuente": fuente_excel
             }
 
         return resultado
@@ -170,9 +224,8 @@ async def query(data: dict):
             "mensaje": "Ocurrió un error procesando la consulta.",
             "voz": "Ocurrió un error procesando la consulta.",
             "error": str(e),
-            "fuente": {"name": archivo_fuente}
+            "fuente": fuente_excel
         }
-
 
 # ============================================================
 # AUTOCOMPLETE
@@ -199,7 +252,6 @@ async def autocomplete_endpoint(q: str):
     except Exception as e:
         return {"sugerencias": [], "error": str(e)}
 
-
 # ============================================================
 # DASHBOARD GLOBAL
 # ============================================================
@@ -211,7 +263,7 @@ async def dashboard_global():
             return {
                 "stock_total": 0,
                 "articulos": 0,
-                "fuente": archivo_fuente
+                "fuente": fuente_excel
             }
 
         stock_total = int(df["stock"].sum()) if "stock" in df.columns else 0
@@ -220,8 +272,8 @@ async def dashboard_global():
         return {
             "stock_total": stock_total,
             "articulos": articulos,
-            "fuente": archivo_fuente
+            "fuente": fuente_excel
         }
 
     except Exception as e:
-        return {"error": str(e), "fuente": archivo_fuente}
+        return {"error": str(e), "fuente": fuente_excel}
