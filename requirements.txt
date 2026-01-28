@@ -12,3 +12,5 @@ google-auth-httplib2
 PyPDF2
 pytesseract
 Pillow
+xlrd==2.0.1
+openpyxl==3.1.2
