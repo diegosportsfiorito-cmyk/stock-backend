@@ -1,6 +1,8 @@
 import os
 import pandas as pd
-from fastapi import FastAPI
+import numpy as np
+
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -11,6 +13,10 @@ from apply_style import apply_style
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
+
+# ============================================================
+# FASTAPI + CORS
+# ============================================================
 app = FastAPI()
 
 app.add_middleware(
@@ -21,14 +27,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ============================================================
+# MODELOS
+# ============================================================
 class QueryRequest(BaseModel):
     question: str
     solo_stock: bool = False
+
 
 class StyleRequest(BaseModel):
     style: str
     admin_key: str
 
+
+# ============================================================
+# CARGA DE EXCEL DESDE GOOGLE DRIVE
+# ============================================================
 def load_excel_from_drive():
     SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
@@ -58,14 +73,27 @@ def load_excel_from_drive():
         f.write(file)
 
     df = pd.read_excel("stock.xlsx")
+
+    # 🔥 LIMPIAR NaN / inf / None
+    df = df.replace([np.inf, -np.inf, np.nan], 0)
+
     return df, newest
 
+
+# ============================================================
+# CARGA INICIAL
+# ============================================================
 df, metadata = load_excel_from_drive()
 indexer = Indexer(df)
 
+
+# ============================================================
+# ENDPOINTS DE ESTILO
+# ============================================================
 @app.get("/style")
 async def get_style():
     return {"style": load_style()}
+
 
 @app.post("/style")
 async def set_style(req: StyleRequest):
@@ -75,21 +103,69 @@ async def set_style(req: StyleRequest):
     save_style(req.style)
     return {"status": "ok", "style": req.style}
 
-@app.post("/query")
-async def query_stock(req: QueryRequest):
-    question = req.question.strip()
-    solo_stock = req.solo_stock
 
+# ============================================================
+# AUTOCOMPLETE
+# ============================================================
+@app.get("/autocomplete")
+async def autocomplete(q: str = Query("")):
+    if not q.strip():
+        return {"suggestions": []}
+
+    suggestions = indexer.autocomplete(q)
+    suggestions = [str(s) for s in suggestions]
+
+    return {"suggestions": suggestions}
+
+
+# ============================================================
+# QUERY — ACEPTA GET Y POST
+# ============================================================
+@app.get("/query")
+@app.post("/query")
+async def query_stock(
+    question: str = None,
+    solo_stock: bool = False,
+    req: QueryRequest = None
+):
+    # Compatibilidad GET y POST
+    if req:
+        question = req.question
+        solo_stock = req.solo_stock
+
+    question = question.strip()
+
+    # Ejecutar búsqueda
     result = indexer.query(question, solo_stock)
 
+    # 🔥 LIMPIAR NaN / inf / None EN LA RESPUESTA
+    def clean(obj):
+        if isinstance(obj, float):
+            if np.isnan(obj) or np.isinf(obj):
+                return 0
+        if obj is None:
+            return 0
+        return obj
+
+    if "items" in result:
+        for item in result["items"]:
+            for k, v in item.items():
+                item[k] = clean(v)
+
+    # Aplicar estilo
     style = load_style()
     result = apply_style(style, result, question)
 
+    # Agregar metadata
     result["fuente"] = metadata
     result["style"] = style
 
     return result
 
+
+# ============================================================
+# ROOT
+# ============================================================
 @app.get("/")
 async def root():
     return {
