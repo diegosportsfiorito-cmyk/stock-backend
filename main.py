@@ -124,14 +124,23 @@ async def autocomplete(q: str = Query("")):
 @app.get("/query")
 @app.post("/query")
 async def query_stock(
+    q: str = None,
     question: str = None,
     solo_stock: bool = False,
     req: QueryRequest = None
 ):
-    # Compatibilidad GET y POST
+    # Compatibilidad POST
     if req:
         question = req.question
         solo_stock = req.solo_stock
+
+    # Compatibilidad GET (frontend usa q=)
+    if question is None and q is not None:
+        question = q
+
+    # Si sigue siendo None → error controlado
+    if question is None:
+        return {"error": "Falta parámetro 'q' o 'question'."}
 
     question = question.strip()
 
