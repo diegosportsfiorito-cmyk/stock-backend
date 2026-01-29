@@ -7,7 +7,6 @@ class Indexer:
         self.df = df
         self.df["texto"] = self.df.apply(self._build_text, axis=1)
 
-        # Sinónimos
         self.synonyms = {
             "pelota": "balon",
             "pelotas": "balones",
@@ -21,14 +20,12 @@ class Indexer:
             "buzo": "hoodie"
         }
 
-        # Palabras irrelevantes
         self.stop_phrases = [
             "dime", "decime", "mostrame", "mostrar", "que hay", "qué hay",
             "que tenes", "qué tenés", "quiero ver", "hay", "tengo", "busco",
             "necesito", "decime que hay", "mostrame que hay"
         ]
 
-        # Normalización de marcas
         self.brand_map = {
             "ch1 sports": "ch1",
             "ch1 sport": "ch1",
@@ -38,9 +35,6 @@ class Indexer:
             "topper": "topper"
         }
 
-    # ---------------------------------------------------------
-    # Construcción del texto base por producto
-    # ---------------------------------------------------------
     def _build_text(self, row):
         parts = [
             str(row.get("Descripción", "")),
@@ -54,9 +48,6 @@ class Indexer:
         text = " ".join(parts)
         return self._normalize(text)
 
-    # ---------------------------------------------------------
-    # Normalización general
-    # ---------------------------------------------------------
     def _normalize(self, text):
         text = text.lower()
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
@@ -64,9 +55,6 @@ class Indexer:
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
-    # ---------------------------------------------------------
-    # Limpieza de la consulta del usuario
-    # ---------------------------------------------------------
     def _clean_query(self, q):
         q = self._normalize(q)
 
@@ -84,18 +72,12 @@ class Indexer:
 
         return " ".join(cleaned).strip()
 
-    # ---------------------------------------------------------
-    # Fuzzy matching para marcas y rubros
-    # ---------------------------------------------------------
     def _normalize_brand(self, word):
         matches = get_close_matches(word, self.brand_map.keys(), n=1, cutoff=0.6)
         if matches:
             return self.brand_map[matches[0]]
         return word
 
-    # ---------------------------------------------------------
-    # Query principal
-    # ---------------------------------------------------------
     def query(self, question, solo_stock=False):
         q = self._clean_query(question)
 
@@ -103,12 +85,10 @@ class Indexer:
             return {
                 "tipo": "lista",
                 "items": [],
-                "voz": "Decime qué producto querés buscar.",
+                "voz": "Decime qué producto querés buscar."
             }
 
         words = q.split()
-
-        # Normalizar marcas
         words = [self._normalize_brand(w) for w in words]
 
         results = []
@@ -123,7 +103,7 @@ class Indexer:
             return {
                 "tipo": "lista",
                 "items": [],
-                "voz": "No encontré resultados exactos, pero puedo buscar alternativas si querés.",
+                "voz": "No encontré resultados exactos, pero tengo alternativas si querés."
             }
 
         items = []
@@ -141,5 +121,5 @@ class Indexer:
         return {
             "tipo": "lista",
             "items": items,
-            "voz": f"Encontré {len(items)} resultados para {q}.",
+            "voz": f"Encontré {len(items)} resultados para {q}."
         }
