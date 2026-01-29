@@ -30,14 +30,12 @@ class QueryRequest(BaseModel):
     solo_stock: bool = False
 
 # ============================================================
-# CARGA DESDE GOOGLE DRIVE
+# CARGA DESDE GOOGLE DRIVE (ARCHIVO MÁS RECIENTE)
 # ============================================================
 def load_excel_from_drive():
     print(">>> INDEXER v4.0 CARGADO <<<")
 
-    # 🔥 RUTA CORRECTA PARA RENDER
     SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
-
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
     creds = service_account.Credentials.from_service_account_file(
@@ -46,10 +44,30 @@ def load_excel_from_drive():
 
     service = build("drive", "v3", credentials=creds)
 
-    FILE_ID = os.getenv("DRIVE_FILE_ID")
+    # ⭐ ID de la carpeta donde están los Excel
+    FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
-    print(f"📂 Cargando desde Drive: {FILE_ID}")
+    print(f"📁 Buscando archivos en carpeta: {FOLDER_ID}")
 
+    # ⭐ Listar archivos dentro de la carpeta
+    results = service.files().list(
+        q=f"'{FOLDER_ID}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'",
+        fields="files(id, name, modifiedTime)",
+        orderBy="modifiedTime desc"
+    ).execute()
+
+    files = results.get("files", [])
+
+    if not files:
+        raise Exception("No se encontraron archivos Excel en la carpeta.")
+
+    # ⭐ Tomar el archivo más reciente
+    newest = files[0]
+    FILE_ID = newest["id"]
+
+    print(f"📂 Archivo más reciente: {newest['name']} ({FILE_ID})")
+
+    # ⭐ Descargar el archivo
     request = service.files().get_media(fileId=FILE_ID)
     file = request.execute()
 
@@ -60,10 +78,7 @@ def load_excel_from_drive():
 
     print("Columnas normalizadas:", df.columns.tolist())
 
-    metadata = service.files().get(
-        fileId=FILE_ID,
-        fields="id, name, mimeType, modifiedTime"
-    ).execute()
+    metadata = newest
 
     print("Excel cargado. Fuente:", metadata)
 
