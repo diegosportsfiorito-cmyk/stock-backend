@@ -1,4 +1,4 @@
-services:
+services: 
   - type: web
     name: stock-backend
     env: python
@@ -22,4 +22,5 @@ services:
       pythonVersion: 3.10
 
     timeout:
+
       request: 120
