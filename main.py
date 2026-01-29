@@ -35,7 +35,9 @@ class QueryRequest(BaseModel):
 def load_excel_from_drive():
     print(">>> INDEXER v4.0 CARGADO <<<")
 
-    SERVICE_ACCOUNT_FILE = "service_account.json"
+    # 🔥 RUTA CORRECTA PARA RENDER
+    SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
+
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
     creds = service_account.Credentials.from_service_account_file(
