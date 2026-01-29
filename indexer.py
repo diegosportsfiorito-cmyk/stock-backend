@@ -1,10 +1,9 @@
 import pandas as pd
-import numpy as np
-import re
+import unicodedata
 from difflib import get_close_matches
 
 # ============================================================
-# INDEXER v4.0 — CORREGIDO Y MEJORADO
+# INDEXER v5.0 — ADAPTADO A TU EXCEL
 # ============================================================
 
 class Indexer:
@@ -21,42 +20,91 @@ class Indexer:
         # Normalizar nombres de columnas
         df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
 
-        # Detectar columnas relevantes
-        columnas_texto = []
-        for col in df.columns:
-            if any(key in col for key in ["desc", "rubro", "categoria", "articulo", "artículo"]):
-                columnas_texto.append(col)
+        cols = list(df.columns)
 
-        # Si no detecta nada, fallback
-        if not columnas_texto:
-            columnas_texto = [df.columns[0]]
+        # Mapeo explícito según tu estructura
+        # 0: marca, 1: rubro, 2: codigo, 3: desc1, 4: desc2, 5: talle, 6: cantidad, 7: lista1, 8: valorizado
+        marca_col     = cols[0] if len(cols) > 0 else None
+        rubro_col     = cols[1] if len(cols) > 1 else None
+        codigo_col    = cols[2] if len(cols) > 2 else None
+        desc_cols     = [c for c in cols[3:5] if c]  # 3 y 4
+        talle_col     = cols[5] if len(cols) > 5 else None
+        cantidad_col  = cols[6] if len(cols) > 6 else None
+        precio_col    = cols[7] if len(cols) > 7 else None
+        valorizado_col= cols[8] if len(cols) > 8 else None
 
-        # Crear columna "texto" unificada
-        df["texto"] = df[columnas_texto].astype(str).apply(lambda x: " ".join(x), axis=1)
+        # Crear columnas estándar
+        if marca_col:
+            df["marca"] = df[marca_col].astype(str)
+        else:
+            df["marca"] = ""
 
-        # Normalizar texto
-        df["texto"] = df["texto"].str.lower()
-        df["texto"] = df["texto"].str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii")
+        if rubro_col:
+            df["rubro"] = df[rubro_col].astype(str)
+        else:
+            df["rubro"] = ""
 
-        # Normalizar plurales
-        df["texto"] = df["texto"].apply(self._normalize_plural)
+        if codigo_col:
+            df["codigo"] = df[codigo_col].astype(str)
+        else:
+            df["codigo"] = ""
 
-        # Normalizar stock
-        if "stock" in df.columns:
-            df["stock"] = pd.to_numeric(df["stock"], errors="coerce").fillna(0)
+        if desc_cols:
+            df["descripcion"] = df[desc_cols].astype(str).apply(lambda x: " ".join(x), axis=1)
+        else:
+            df["descripcion"] = ""
+
+        if talle_col:
+            df["talle"] = df[talle_col].astype(str)
+        else:
+            df["talle"] = ""
+
+        if cantidad_col:
+            df["stock"] = pd.to_numeric(df[cantidad_col], errors="coerce").fillna(0)
         else:
             df["stock"] = 0
+
+        if precio_col:
+            df["precio"] = pd.to_numeric(df[precio_col], errors="coerce").fillna(0)
+        else:
+            df["precio"] = None
+
+        if valorizado_col:
+            df["valorizado"] = pd.to_numeric(df[valorizado_col], errors="coerce").fillna(0)
+        else:
+            df["valorizado"] = 0
+
+        # Texto unificado para búsqueda: marca + rubro + descripción + código
+        df["texto"] = (
+            df["marca"].fillna("") + " " +
+            df["rubro"].fillna("") + " " +
+            df["descripcion"].fillna("") + " " +
+            df["codigo"].fillna("")
+        )
+
+        # Normalizar texto (minúsculas + sin acentos + plurales)
+        df["texto"] = df["texto"].str.lower().apply(self._strip_accents)
+        df["texto"] = df["texto"].apply(self._normalize_plural)
 
         return df
 
     # ============================================================
-    # NORMALIZACIÓN DE PLURALES
+    # UTILIDADES DE NORMALIZACIÓN
     # ============================================================
+    def _strip_accents(self, text):
+        if not isinstance(text, str):
+            text = str(text)
+        return "".join(
+            c for c in unicodedata.normalize("NFKD", text)
+            if not unicodedata.combining(c)
+        )
+
     def _normalize_plural(self, text):
         # balones → balon, pelotas → pelota, zapatillas → zapatilla
-        if text.endswith("es"):
+        text = text.strip()
+        if len(text) > 3 and text.endswith("es"):
             return text[:-2]
-        if text.endswith("s"):
+        if len(text) > 2 and text.endswith("s"):
             return text[:-1]
         return text
 
@@ -68,20 +116,10 @@ class Indexer:
             return self._respuesta_vacia("No entendí la consulta.")
 
         q = question.lower().strip()
+        q = self._strip_accents(q)
         q = self._normalize_plural(q)
 
-        # Normalizar acentos
-        q = (
-            q.normalize("NFKD")
-            .encode("ascii", "ignore")
-            .decode("ascii")
-            if hasattr(q, "normalize")
-            else q
-        )
-
-        # ============================================================
-        # 1) BÚSQUEDA DIRECTA
-        # ============================================================
+        # 1) Búsqueda directa en texto
         directos = self.df[self.df["texto"].str.contains(q, regex=False, na=False)]
 
         if solo_stock:
@@ -90,10 +128,8 @@ class Indexer:
         if len(directos) > 0:
             return self._formatear_respuesta(directos, question)
 
-        # ============================================================
-        # 2) BÚSQUEDA POR PALABRAS INDIVIDUALES
-        # ============================================================
-        palabras = q.split()
+        # 2) Búsqueda por palabras individuales
+        palabras = [p for p in q.split() if p]
         if len(palabras) > 1:
             filtro = self.df.copy()
             for p in palabras:
@@ -105,11 +141,9 @@ class Indexer:
             if len(filtro) > 0:
                 return self._formatear_respuesta(filtro, question)
 
-        # ============================================================
-        # 3) BÚSQUEDA POR SIMILITUD (difflib)
-        # ============================================================
+        # 3) Búsqueda por similitud
         todos_los_textos = self.df["texto"].tolist()
-        candidatos = get_close_matches(q, todos_los_textos, n=20, cutoff=0.6)
+        candidatos = get_close_matches(q, todos_los_textos, n=30, cutoff=0.6)
 
         if candidatos:
             simil = self.df[self.df["texto"].isin(candidatos)]
@@ -119,20 +153,7 @@ class Indexer:
             if len(simil) > 0:
                 return self._formatear_respuesta(simil, question)
 
-        # ============================================================
-        # 4) BÚSQUEDA POR RUBRO (columna 2 del Excel)
-        # ============================================================
-        if "descripcion_1" in self.df.columns:
-            rubro = self.df[self.df["descripcion_1"].str.contains(q, regex=False, na=False)]
-            if solo_stock:
-                rubro = rubro[rubro["stock"] > 0]
-
-            if len(rubro) > 0:
-                return self._formatear_respuesta(rubro, question)
-
-        # ============================================================
-        # 5) SIN RESULTADOS
-        # ============================================================
+        # 4) Sin resultados
         return self._respuesta_vacia("No encontré resultados.")
 
     # ============================================================
@@ -144,9 +165,15 @@ class Indexer:
         for _, row in df.iterrows():
             items.append({
                 "codigo": row.get("codigo", ""),
-                "descripcion": row.get("texto", ""),
-                "talles": [{"talle": row.get("talle", ""), "stock": row.get("stock", 0)}],
-                "precio": row.get("precio", None)
+                "descripcion": row.get("descripcion", ""),
+                "marca": row.get("marca", ""),
+                "rubro": row.get("rubro", ""),
+                "talles": [{
+                    "talle": row.get("talle", ""),
+                    "stock": row.get("stock", 0)
+                }],
+                "precio": row.get("precio", None),
+                "color": ""
             })
 
         return {
