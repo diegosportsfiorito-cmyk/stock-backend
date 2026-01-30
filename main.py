@@ -56,7 +56,7 @@ def load_excel_from_drive():
 
     FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
-    # 🔥 Buscar XLSX y XLS
+    # Buscar XLSX y XLS
     query = (
         f"'{FOLDER_ID}' in parents and ("
         "mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
@@ -91,7 +91,7 @@ def load_excel_from_drive():
     with open(filename, "wb") as f:
         f.write(file)
 
-    # 🔥 Leer XLS o XLSX automáticamente
+    # Leer XLS o XLSX automáticamente
     df = pd.read_excel(filename, engine="xlrd" if filename.endswith(".xls") else None)
 
     # LIMPIAR NaN / inf / None
@@ -156,14 +156,19 @@ async def query_stock(
             return 0
         return obj
 
+    # LIMPIAR items
     if "items" in result:
         for item in result["items"]:
-            for k, v in item.items():
-                item[k] = clean(v)
+            item["precio"] = clean(item.get("precio"))
+            item["valorizado"] = clean(item.get("valorizado"))
+            for t in item["talles"]:
+                t["stock"] = clean(t.get("stock"))
 
+    # Aplicar estilo
     style = load_style()
     result = apply_style(style, result, question)
 
+    # Agregar metadata
     result["fuente"] = metadata
     result["style"] = style
 
@@ -177,5 +182,5 @@ async def query_stock(
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO v5.0 listo (XLS + XLSX)."
+        "message": "Backend Stock IA PRO v5.0 listo (XLS + XLSX + valorizado)."
     }
