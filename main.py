@@ -42,7 +42,7 @@ class StyleRequest(BaseModel):
 
 
 # ============================================================
-# CARGA DE EXCEL DESDE GOOGLE DRIVE
+# CARGA DE EXCEL DESDE GOOGLE DRIVE (XLS + XLSX)
 # ============================================================
 def load_excel_from_drive():
     SERVICE_ACCOUNT_FILE = "/etc/secrets/service_account.json"
@@ -56,52 +56,48 @@ def load_excel_from_drive():
 
     FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
+    # 🔥 Buscar XLSX y XLS
+    query = (
+        f"'{FOLDER_ID}' in parents and ("
+        "mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
+        "or mimeType='application/vnd.ms-excel'"
+        ")"
+    )
+
     results = service.files().list(
-        q=f"'{FOLDER_ID}' in parents and mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'",
-        fields="files(id, name, modifiedTime)",
+        q=query,
+        fields="files(id, name, modifiedTime, mimeType)",
         orderBy="modifiedTime desc"
     ).execute()
 
     files = results.get("files", [])
+
+    if not files:
+        raise Exception("No se encontró ningún archivo Excel (.xls o .xlsx) en Google Drive.")
+
     newest = files[0]
     FILE_ID = newest["id"]
 
     request = service.files().get_media(fileId=FILE_ID)
     file = request.execute()
 
-    with open("stock.xlsx", "wb") as f:
+    # Guardar archivo temporal
+    filename = "stock_file"
+    if newest["mimeType"] == "application/vnd.ms-excel":
+        filename += ".xls"
+    else:
+        filename += ".xlsx"
+
+    with open(filename, "wb") as f:
         f.write(file)
 
-    df = pd.read_excel("stock.xlsx")
+    # 🔥 Leer XLS o XLSX automáticamente
+    df = pd.read_excel(filename, engine="xlrd" if filename.endswith(".xls") else None)
 
-    # 🔥 LIMPIAR NaN / inf / None
+    # LIMPIAR NaN / inf / None
     df = df.replace([np.inf, -np.inf, np.nan], 0)
 
     return df, newest
-
-
-# ============================================================
-# CARGA INICIAL
-# ============================================================
-df, metadata = load_excel_from_drive()
-indexer = Indexer(df)
-
-
-# ============================================================
-# ENDPOINTS DE ESTILO
-# ============================================================
-@app.get("/style")
-async def get_style():
-    return {"style": load_style()}
-
-
-@app.post("/style")
-async def set_style(req: StyleRequest):
-    if req.admin_key != os.getenv("ADMIN_KEY"):
-        return {"error": "Unauthorized"}
-
-    save_style(req.style)
-    return {"status": "ok", "style": req.style}
 
 
 # ============================================================
@@ -111,6 +107,9 @@ async def set_style(req: StyleRequest):
 async def autocomplete(q: str = Query("")):
     if not q.strip():
         return {"suggestions": []}
+
+    df, _ = load_excel_from_drive()
+    indexer = Indexer(df)
 
     suggestions = indexer.autocomplete(q)
     suggestions = [str(s) for s in suggestions]
@@ -138,16 +137,17 @@ async def query_stock(
     if question is None and q is not None:
         question = q
 
-    # Si sigue siendo None → error controlado
     if question is None:
         return {"error": "Falta parámetro 'q' o 'question'."}
 
     question = question.strip()
 
-    # Ejecutar búsqueda
+    df, metadata = load_excel_from_drive()
+    indexer = Indexer(df)
+
     result = indexer.query(question, solo_stock)
 
-    # 🔥 LIMPIAR NaN / inf / None EN LA RESPUESTA
+    # LIMPIAR NaN / inf / None
     def clean(obj):
         if isinstance(obj, float):
             if np.isnan(obj) or np.isinf(obj):
@@ -161,11 +161,9 @@ async def query_stock(
             for k, v in item.items():
                 item[k] = clean(v)
 
-    # Aplicar estilo
     style = load_style()
     result = apply_style(style, result, question)
 
-    # Agregar metadata
     result["fuente"] = metadata
     result["style"] = style
 
@@ -179,5 +177,5 @@ async def query_stock(
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO v5.0 listo."
+        "message": "Backend Stock IA PRO v5.0 listo (XLS + XLSX)."
     }
