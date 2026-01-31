@@ -37,6 +37,25 @@ class QueryRequest(BaseModel):
 
 
 # ============================================================
+# NORMALIZACIÓN DE NOMBRES DE COLUMNAS
+# ============================================================
+def normalize_columns(df):
+    def clean(col):
+        col = str(col)
+        col = col.replace("\xa0", " ")   # NBSP
+        col = col.replace("\t", " ")     # tabs
+        col = col.replace("\r", "")      # returns
+        col = col.replace("\n", "")      # newlines
+        col = col.strip()                # trim spaces
+        col = col.upper()                # uppercase
+        col = col.replace("  ", " ")     # double spaces
+        return col
+
+    df.columns = [clean(c) for c in df.columns]
+    return df
+
+
+# ============================================================
 # CARGA DE EXCEL DESDE GOOGLE DRIVE
 # ============================================================
 def load_excel_from_drive():
@@ -80,7 +99,24 @@ def load_excel_from_drive():
 
     df = pd.read_excel(filename)
 
-    # Normalizar valores europeos: "22.000,00" → 22000.00
+    # Normalizar nombres de columnas
+    df = normalize_columns(df)
+
+    # Detectar columnas reales
+    col_precio = next((c for c in df.columns if "LISTA" == c), None)
+    col_valorizado = next((c for c in df.columns if "VALORIZADO LISTA" == c), None)
+    col_stock = next((c for c in df.columns if c in ["CANTID", "CANTIDAD", "CANT"]), None)
+
+    if col_precio is None:
+        raise Exception("No se encontró columna de precio (LISTA).")
+
+    if col_valorizado is None:
+        raise Exception("No se encontró columna de valorizado (Valorizado LISTA).")
+
+    if col_stock is None:
+        raise Exception("No se encontró columna de stock (Cantid / Cantidad).")
+
+    # Normalizar números europeos
     def normalize_number(x):
         if isinstance(x, str):
             x = x.replace(".", "").replace(",", ".")
@@ -89,41 +125,41 @@ def load_excel_from_drive():
         except:
             return 0
 
-    df["LISTA"] = df["LISTA"].apply(normalize_number)
-    df["Valorizado LISTA"] = df["Valorizado LISTA"].apply(normalize_number)
-    df["Cantid"] = df["Cantid"].apply(normalize_number)
+    df[col_precio] = df[col_precio].apply(normalize_number)
+    df[col_valorizado] = df[col_valorizado].apply(normalize_number)
+    df[col_stock] = df[col_stock].apply(normalize_number)
 
     df = df.replace([np.inf, -np.inf, np.nan], 0)
 
-    return df, newest
+    return df, newest, col_precio, col_valorizado, col_stock
 
 
 # ============================================================
 # AGRUPACIÓN REAL (UNA FILA POR TALLE)
 # ============================================================
-def group_rows(df):
+def group_rows(df, col_precio, col_valorizado, col_stock):
     grouped = {}
 
     for _, row in df.iterrows():
-        codigo = str(row.get("Artículo", "")).strip()
+        codigo = str(row.get("ARTÍCULO", "")).strip()
         if not codigo:
             continue
 
         if codigo not in grouped:
             grouped[codigo] = {
                 "codigo": codigo,
-                "descripcion": str(row.get("Descripción", "")).strip(),
-                "marca": str(row.get("Marca", "")).strip(),
-                "rubro": str(row.get("Rubro", "")).strip(),
-                "color": str(row.get("Color", "")).strip(),
-                "precio": float(row.get("LISTA", 0)),
+                "descripcion": str(row.get("DESCRIPCIÓN", "")).strip(),
+                "marca": str(row.get("MARCA", "")).strip(),
+                "rubro": str(row.get("RUBRO", "")).strip(),
+                "color": str(row.get("COLOR", "")).strip(),
+                "precio": float(row.get(col_precio, 0)),
                 "talles": [],
                 "valorizado": 0,
             }
 
-        talle = str(row.get("Talle", "")).strip()
-        stock = float(row.get("Cantid", 0))
-        valorizado = float(row.get("Valorizado LISTA", 0))
+        talle = str(row.get("TALLE", "")).strip()
+        stock = float(row.get(col_stock, 0))
+        valorizado = float(row.get(col_valorizado, 0))
 
         grouped[codigo]["talles"].append({"talle": talle, "stock": stock})
         grouped[codigo]["valorizado"] += valorizado
@@ -139,7 +175,7 @@ async def autocomplete(q: str = Query("")):
     if not q.strip():
         return {"suggestions": []}
 
-    df, _ = load_excel_from_drive()
+    df, _, _, _, _ = load_excel_from_drive()
     indexer = Indexer(df)
 
     suggestions = indexer.autocomplete(q)
@@ -171,34 +207,27 @@ async def query_stock(
 
     question = question.strip().upper()
 
-    df, metadata = load_excel_from_drive()
+    df, metadata, col_precio, col_valorizado, col_stock = load_excel_from_drive()
     indexer = Indexer(df)
 
-    # ============================================================
-    # 1) COINCIDENCIA EXACTA POR ARTÍCULO
-    # ============================================================
-    exact_rows = df[df["Artículo"].astype(str).str.upper() == question]
+    # EXACT MATCH
+    exact_rows = df[df["ARTÍCULO"].astype(str).str.upper() == question]
 
     if len(exact_rows) > 0:
-        items = group_rows(exact_rows)
+        items = group_rows(exact_rows, col_precio, col_valorizado, col_stock)
         result = {"tipo": "lista", "items": items}
 
     else:
-        # ============================================================
-        # 2) SI NO HAY EXACTA → FUZZY SEARCH
-        # ============================================================
         fuzzy = indexer.query(question, solo_stock)
 
         if "items" in fuzzy:
             fuzzy_df = pd.DataFrame(fuzzy["items"])
-            items = group_rows(fuzzy_df)
+            items = group_rows(fuzzy_df, col_precio, col_valorizado, col_stock)
             fuzzy["items"] = items
 
         result = fuzzy
 
-    # ============================================================
     # LIMPIEZA
-    # ============================================================
     def clean(obj):
         if isinstance(obj, float) and (np.isnan(obj) or np.isinf(obj)):
             return 0
@@ -211,7 +240,6 @@ async def query_stock(
             for t in item["talles"]:
                 t["stock"] = clean(t.get("stock"))
 
-    # Estilo
     style = load_style()
     result = apply_style(style, result, question)
 
@@ -226,11 +254,11 @@ async def query_stock(
 # ============================================================
 @app.get("/catalogos")
 async def get_catalogos():
-    df, _ = load_excel_from_drive()
+    df, _, _, _, _ = load_excel_from_drive()
 
-    marcas = sorted(set(df["Marca"].astype(str).str.strip()))
-    rubros = sorted(set(df["Rubro"].astype(str).str.strip()))
-    talles = sorted(set(df["Talle"].astype(str).str.strip()))
+    marcas = sorted(set(df["MARCA"].astype(str).str.strip()))
+    rubros = sorted(set(df["RUBRO"].astype(str).str.strip()))
+    talles = sorted(set(df["TALLE"].astype(str).str.strip()))
 
     return {
         "marcas": marcas,
@@ -246,5 +274,5 @@ async def get_catalogos():
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO adaptado a Excel real (una fila por talle, LISTA y Valorizado normalizados)."
+        "message": "Backend Stock IA PRO con normalización de columnas y soporte para Excel real."
     }
