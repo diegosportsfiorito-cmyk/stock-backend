@@ -79,6 +79,20 @@ def load_excel_from_drive():
         f.write(file)
 
     df = pd.read_excel(filename)
+
+    # Normalizar valores europeos: "22.000,00" → 22000.00
+    def normalize_number(x):
+        if isinstance(x, str):
+            x = x.replace(".", "").replace(",", ".")
+        try:
+            return float(x)
+        except:
+            return 0
+
+    df["LISTA"] = df["LISTA"].apply(normalize_number)
+    df["Valorizado LISTA"] = df["Valorizado LISTA"].apply(normalize_number)
+    df["Cantid"] = df["Cantid"].apply(normalize_number)
+
     df = df.replace([np.inf, -np.inf, np.nan], 0)
 
     return df, newest
@@ -108,7 +122,7 @@ def group_rows(df):
             }
 
         talle = str(row.get("Talle", "")).strip()
-        stock = float(row.get("Cantidad", 0))
+        stock = float(row.get("Cantid", 0))
         valorizado = float(row.get("Valorizado LISTA", 0))
 
         grouped[codigo]["talles"].append({"talle": talle, "stock": stock})
@@ -174,8 +188,12 @@ async def query_stock(
         # 2) SI NO HAY EXACTA → FUZZY SEARCH
         # ============================================================
         fuzzy = indexer.query(question, solo_stock)
+
         if "items" in fuzzy:
-            fuzzy["items"] = group_rows(pd.DataFrame(fuzzy["items"]))
+            fuzzy_df = pd.DataFrame(fuzzy["items"])
+            items = group_rows(fuzzy_df)
+            fuzzy["items"] = items
+
         result = fuzzy
 
     # ============================================================
@@ -228,5 +246,5 @@ async def get_catalogos():
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO adaptado a Excel real (una fila por talle)."
+        "message": "Backend Stock IA PRO adaptado a Excel real (una fila por talle, LISTA y Valorizado normalizados)."
     }
