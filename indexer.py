@@ -1,6 +1,5 @@
 import re
 import unicodedata
-from difflib import get_close_matches
 from collections import defaultdict
 
 class Indexer:
@@ -8,15 +7,6 @@ class Indexer:
         self.df = df
 
         # Mapeo REAL de columnas según tu Excel
-        # Col 0: Descripción (MARCA)
-        # Col 1: Descripción (RUBRO)
-        # Col 2: Artículo (CÓDIGO)
-        # Col 3: Descripción (NOMBRE)
-        # Col 4: Descripción (COLOR)
-        # Col 5: Talle
-        # Col 6: Cantidad (STOCK)
-        # Col 7: LISTA1 (PRECIO)
-        # Col 8: Valorizado LISTA1 (STOCK * PRECIO)
         self.df["marca"] = self.df.iloc[:, 0].astype(str)
         self.df["rubro"] = self.df.iloc[:, 1].astype(str)
         self.df["codigo"] = self.df.iloc[:, 2].astype(str)
@@ -55,6 +45,9 @@ class Indexer:
             "necesito", "decime que hay", "mostrame que hay", "cuantos", "cuánto"
         ]
 
+    # ---------------------------------------------------------
+    # NORMALIZACIÓN
+    # ---------------------------------------------------------
     def _normalize(self, text):
         text = str(text).lower()
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
@@ -87,37 +80,10 @@ class Indexer:
 
         return " ".join(cleaned).strip()
 
-    def query(self, question, solo_stock=False):
-        q = self._clean_query(question)
-
-        if not q:
-            return {
-                "tipo": "lista",
-                "items": [],
-                "voz": "Decime qué producto querés buscar."
-            }
-
-        words = q.split()
-
-        results = []
-        for _, row in self.df.iterrows():
-            text = row["texto"]
-            if all(w in text for w in words):
-                if solo_stock:
-                    try:
-                        if float(str(row["stock"]).replace(",", ".")) <= 0:
-                            continue
-                    except Exception:
-                        pass
-                results.append(row)
-
-        if not results:
-            return {
-                "tipo": "lista",
-                "items": [],
-                "voz": f"No encontré resultados para '{question}', pero puedo buscar algo parecido."
-            }
-
+    # ---------------------------------------------------------
+    # ARMADO DE RESPUESTA
+    # ---------------------------------------------------------
+    def _build_response(self, df_subset, question):
         grouped = defaultdict(lambda: {
             "codigo": "",
             "descripcion": "",
@@ -129,7 +95,7 @@ class Indexer:
             "color": ""
         })
 
-        for r in results:
+        for _, r in df_subset.iterrows():
             code = r["codigo"]
 
             grouped[code]["codigo"] = r["codigo"]
@@ -146,7 +112,7 @@ class Indexer:
 
             try:
                 grouped[code]["valorizado"] += float(str(r["valorizado"]).replace(".", "").replace(",", "."))
-            except Exception:
+            except:
                 pass
 
         items = list(grouped.values())
@@ -156,3 +122,66 @@ class Indexer:
             "items": items,
             "voz": f"Encontré {len(items)} resultados para '{question}'."
         }
+
+    # ---------------------------------------------------------
+    # QUERY PRINCIPAL (CON COINCIDENCIA EXACTA + PREFIJO)
+    # ---------------------------------------------------------
+    def query(self, question, solo_stock=False):
+        q = self._clean_query(question)
+
+        if not q:
+            return {
+                "tipo": "lista",
+                "items": [],
+                "voz": "Decime qué producto querés buscar."
+            }
+
+        q_lower = q.lower()
+
+        # -----------------------------------------------------
+        # 1) MATCH EXACTO POR PALABRA COMPLETA EN NOMBRE
+        # -----------------------------------------------------
+        mask_exact = self.df["nombre"].str.lower() == q_lower
+        df_exact = self.df[mask_exact]
+
+        if not df_exact.empty:
+            if solo_stock:
+                df_exact = df_exact[df_exact["stock"] > 0]
+            return self._build_response(df_exact, question)
+
+        # -----------------------------------------------------
+        # 2) MATCH POR PREFIJO (VENDA → VENDA ELÁSTICA)
+        # -----------------------------------------------------
+        mask_prefix = self.df["nombre"].str.lower().str.startswith(q_lower)
+        df_prefix = self.df[mask_prefix]
+
+        if not df_prefix.empty:
+            if solo_stock:
+                df_prefix = df_prefix[df_prefix["stock"] > 0]
+            return self._build_response(df_prefix, question)
+
+        # -----------------------------------------------------
+        # 3) BÚSQUEDA NORMAL (tu método original)
+        # -----------------------------------------------------
+        words = q_lower.split()
+        results = []
+
+        for _, row in self.df.iterrows():
+            text = row["texto"]
+            if all(w in text for w in words):
+                if solo_stock:
+                    try:
+                        if float(str(row["stock"]).replace(",", ".")) <= 0:
+                            continue
+                    except:
+                        pass
+                results.append(row)
+
+        if not results:
+            return {
+                "tipo": "lista",
+                "items": [],
+                "voz": f"No encontré resultados para '{question}', pero puedo buscar algo parecido."
+            }
+
+        return self._build_response(results, question)
