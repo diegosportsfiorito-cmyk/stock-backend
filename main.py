@@ -56,7 +56,6 @@ def load_excel_from_drive():
 
     FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
-    # Buscar XLSX y XLS
     query = (
         f"'{FOLDER_ID}' in parents and ("
         "mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
@@ -81,7 +80,6 @@ def load_excel_from_drive():
     request = service.files().get_media(fileId=FILE_ID)
     file = request.execute()
 
-    # Guardar archivo temporal
     filename = "stock_file"
     if newest["mimeType"] == "application/vnd.ms-excel":
         filename += ".xls"
@@ -91,10 +89,8 @@ def load_excel_from_drive():
     with open(filename, "wb") as f:
         f.write(file)
 
-    # Leer XLS o XLSX automáticamente
     df = pd.read_excel(filename, engine="xlrd" if filename.endswith(".xls") else None)
 
-    # LIMPIAR NaN / inf / None
     df = df.replace([np.inf, -np.inf, np.nan], 0)
 
     return df, newest
@@ -118,7 +114,7 @@ async def autocomplete(q: str = Query("")):
 
 
 # ============================================================
-# QUERY — ACEPTA GET Y POST
+# QUERY — GET y POST
 # ============================================================
 @app.get("/query")
 @app.post("/query")
@@ -133,7 +129,7 @@ async def query_stock(
         question = req.question
         solo_stock = req.solo_stock
 
-    # Compatibilidad GET (frontend usa q=)
+    # Compatibilidad GET
     if question is None and q is not None:
         question = q
 
@@ -142,12 +138,57 @@ async def query_stock(
 
     question = question.strip()
 
+    # Cargar Excel SIEMPRE (OPCIÓN A)
     df, metadata = load_excel_from_drive()
     indexer = Indexer(df)
 
-    result = indexer.query(question, solo_stock)
+    # ============================================================
+    # 1) BUSCAR COINCIDENCIA EXACTA POR ARTÍCULO
+    # ============================================================
+    question_upper = question.upper()
 
-    # LIMPIAR NaN / inf / None
+    exact_items = []
+    for _, row in df.iterrows():
+        articulo = str(row.get("Artículo", "")).strip().upper()
+        if articulo == question_upper:
+            exact_items.append(row)
+
+    if exact_items:
+        # Construir respuesta EXACTA
+        items = []
+        for row in exact_items:
+            talles = []
+            for col in df.columns:
+                if str(col).startswith("Talle_"):
+                    talle = col.replace("Talle_", "")
+                    stock = row[col]
+                    talles.append({"talle": talle, "stock": stock})
+
+            items.append({
+                "codigo": row.get("Artículo", ""),
+                "descripcion": row.get("Descripción", ""),
+                "marca": row.get("Marca", ""),
+                "rubro": row.get("Rubro", ""),
+                "color": row.get("Color", ""),
+                "precio": row.get("LISTA", 0),
+                "valorizado": row.get("Valorizado LISTA", 0),
+                "talles": talles
+            })
+
+        result = {
+            "tipo": "lista",
+            "items": items
+        }
+
+    else:
+        # ============================================================
+        # 2) SI NO HAY COINCIDENCIA EXACTA → fuzzy search normal
+        # ============================================================
+        result = indexer.query(question, solo_stock)
+
+    # ============================================================
+    # LIMPIEZA DE DATOS
+    # ============================================================
     def clean(obj):
         if isinstance(obj, float):
             if np.isnan(obj) or np.isinf(obj):
@@ -156,7 +197,6 @@ async def query_stock(
             return 0
         return obj
 
-    # LIMPIAR items
     if "items" in result:
         for item in result["items"]:
             item["precio"] = clean(item.get("precio"))
@@ -168,11 +208,38 @@ async def query_stock(
     style = load_style()
     result = apply_style(style, result, question)
 
-    # Agregar metadata
+    # Metadata
     result["fuente"] = metadata
     result["style"] = style
 
     return result
+
+
+# ============================================================
+# CATALOGO COMPLETO (MARCAS, RUBROS, TALLES)
+# ============================================================
+@app.get("/catalogos")
+async def get_catalogos():
+    df, _ = load_excel_from_drive()
+
+    marcas = set()
+    rubros = set()
+    talles = set()
+
+    for _, row in df.iterrows():
+        marcas.add(str(row.get("Marca", "")).strip())
+        rubros.add(str(row.get("Rubro", "")).strip())
+
+        for col in df.columns:
+            if str(col).startswith("Talle_"):
+                talle = col.replace("Talle_", "")
+                talles.add(talle)
+
+    return {
+        "marcas": sorted(list(marcas)),
+        "rubros": sorted(list(rubros)),
+        "talles": sorted(list(talles))
+    }
 
 
 # ============================================================
@@ -182,5 +249,5 @@ async def query_stock(
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO v5.0 listo (XLS + XLSX + valorizado)."
+        "message": "Backend Stock IA PRO v5.0 listo (XLS + XLSX + valorizado + catalogos + exact-match)."
     }
