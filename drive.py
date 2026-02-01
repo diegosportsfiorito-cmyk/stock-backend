@@ -1,5 +1,3 @@
-# ===== INICIO DRIVE.PY =====
-
 import json
 import os
 from typing import List, Dict
@@ -9,12 +7,14 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 import io
 
-GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
-
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 def _get_drive_service():
-    info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+    # Leer el archivo secreto montado por Render
+    path = "/etc/secrets/service_account.json"
+    with open(path, "r") as f:
+        info = json.load(f)
+
     creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
     service = build("drive", "v3", credentials=creds)
     return service
@@ -38,5 +38,3 @@ def descargar_archivo_por_id(file_id: str) -> bytes:
         status, done = downloader.next_chunk()
     fh.seek(0)
     return fh.read()
-
-# ===== FIN DRIVE.PY =====
