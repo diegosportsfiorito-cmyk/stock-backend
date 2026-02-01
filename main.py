@@ -37,18 +37,18 @@ class QueryRequest(BaseModel):
 
 
 # ============================================================
-# NORMALIZACIÓN DE NOMBRES DE COLUMNAS
+# NORMALIZACIÓN DE COLUMNAS
 # ============================================================
 def normalize_columns(df):
     def clean(col):
         col = str(col)
-        col = col.replace("\xa0", " ")   # NBSP
-        col = col.replace("\t", " ")     # tabs
-        col = col.replace("\r", "")      # returns
-        col = col.replace("\n", "")      # newlines
-        col = col.strip()                # trim spaces
-        col = col.upper()                # uppercase
-        col = col.replace("  ", " ")     # double spaces
+        col = col.replace("\xa0", " ")
+        col = col.replace("\t", " ")
+        col = col.replace("\r", "")
+        col = col.replace("\n", "")
+        col = col.strip()
+        col = col.upper()
+        col = col.replace("  ", " ")
         return col
 
     df.columns = [clean(c) for c in df.columns]
@@ -99,22 +99,21 @@ def load_excel_from_drive():
 
     df = pd.read_excel(filename)
 
-    # Normalizar nombres de columnas
     df = normalize_columns(df)
 
     # Detectar columnas reales
-    col_precio = next((c for c in df.columns if "LISTA" == c), None)
-    col_valorizado = next((c for c in df.columns if "VALORIZADO LISTA" == c), None)
-    col_stock = next((c for c in df.columns if c in ["CANTID", "CANTIDAD", "CANT"]), None)
+    col_precio = "PRECIO PUBLICO"
+    col_valorizado = "PRECIO VALORIZADO"
+    col_stock = "CANTIDAD"
 
-    if col_precio is None:
-        raise Exception("No se encontró columna de precio (LISTA).")
+    if col_precio not in df.columns:
+        raise Exception(f"No existe columna '{col_precio}' en el Excel.")
 
-    if col_valorizado is None:
-        raise Exception("No se encontró columna de valorizado (Valorizado LISTA).")
+    if col_valorizado not in df.columns:
+        raise Exception(f"No existe columna '{col_valorizado}' en el Excel.")
 
-    if col_stock is None:
-        raise Exception("No se encontró columna de stock (Cantid / Cantidad).")
+    if col_stock not in df.columns:
+        raise Exception(f"No existe columna '{col_stock}' en el Excel.")
 
     # Normalizar números europeos
     def normalize_number(x):
@@ -141,14 +140,14 @@ def group_rows(df, col_precio, col_valorizado, col_stock):
     grouped = {}
 
     for _, row in df.iterrows():
-        codigo = str(row.get("ARTÍCULO", "")).strip()
+        codigo = str(row.get("ARTICULO", "")).strip()
         if not codigo:
             continue
 
         if codigo not in grouped:
             grouped[codigo] = {
                 "codigo": codigo,
-                "descripcion": str(row.get("DESCRIPCIÓN", "")).strip(),
+                "descripcion": str(row.get("DESCRIPCION", "")).strip(),
                 "marca": str(row.get("MARCA", "")).strip(),
                 "rubro": str(row.get("RUBRO", "")).strip(),
                 "color": str(row.get("COLOR", "")).strip(),
@@ -211,7 +210,7 @@ async def query_stock(
     indexer = Indexer(df)
 
     # EXACT MATCH
-    exact_rows = df[df["ARTÍCULO"].astype(str).str.upper() == question]
+    exact_rows = df[df["ARTICULO"].astype(str).str.upper() == question]
 
     if len(exact_rows) > 0:
         items = group_rows(exact_rows, col_precio, col_valorizado, col_stock)
@@ -274,5 +273,5 @@ async def get_catalogos():
 async def root():
     return {
         "status": "OK",
-        "message": "Backend Stock IA PRO con normalización de columnas y soporte para Excel real."
+        "message": "Backend Stock IA PRO adaptado a columnas reales."
     }
