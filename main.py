@@ -16,7 +16,6 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 DRIVE_FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
-# Columnas reales del Excel
 COL_CODIGO = "Artículo"
 COL_DESC = "Descripción"
 COL_TALLE = "Talle"
@@ -28,7 +27,7 @@ COL_VALORIZADO = "Valorizado LISTA1"
 # FASTAPI
 # ============================================================
 
-app = FastAPI(title="ORB STOCK Backend")
+app = FastAPI(title="STOCK IA PRO Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,38 +67,24 @@ class QueryResponse(BaseModel):
 
 
 # ============================================================
-# CARGA DE EXCEL DESDE GOOGLE DRIVE (ARCHIVO MÁS RECIENTE)
+# CARGA DE EXCEL DESDE GOOGLE DRIVE
 # ============================================================
 
 def load_excel_from_drive() -> pd.DataFrame:
     archivos = listar_archivos_en_carpeta(DRIVE_FOLDER_ID)
 
-    if not archivos:
-        raise Exception("No se encontraron archivos en la carpeta de Drive.")
-
-    # Filtrar solo archivos .xlsx
     excel_files = [f for f in archivos if f["name"].lower().endswith(".xlsx")]
-    if not excel_files:
-        raise Exception("No se encontraron archivos .xlsx en la carpeta de Drive.")
-
-    # Ordenar por fecha de modificación (más reciente primero)
     excel_files.sort(key=lambda x: x["modifiedTime"], reverse=True)
 
-    archivo_reciente = excel_files[0]
-    file_id = archivo_reciente["id"]
-
+    file_id = excel_files[0]["id"]
     contenido = descargar_archivo_por_id(file_id)
     buffer = io.BytesIO(contenido)
 
     df = pd.read_excel(buffer)
 
     required = [
-        COL_CODIGO,
-        COL_DESC,
-        COL_TALLE,
-        COL_STOCK,
-        COL_PRECIO,
-        COL_VALORIZADO,
+        COL_CODIGO, COL_DESC, COL_TALLE,
+        COL_STOCK, COL_PRECIO, COL_VALORIZADO
     ]
 
     missing = [c for c in required if c not in df.columns]
@@ -110,7 +95,7 @@ def load_excel_from_drive() -> pd.DataFrame:
 
 
 # ============================================================
-# LÓGICA DE BÚSQUEDA
+# LÓGICA DE BÚSQUEDA INTELIGENTE
 # ============================================================
 
 def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
@@ -120,8 +105,36 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
     df2["__desc"] = df2[COL_DESC].astype(str).str.upper()
     df2["__cod"] = df2[COL_CODIGO].astype(str).str.upper()
 
-    mask = df2["__desc"].str.contains(q, na=False) | df2["__cod"].str.contains(q, na=False)
-    df2 = df2[mask]
+    # ============================================================
+    # 1) Coincidencia EXACTA en ARTÍCULO (código)
+    # ============================================================
+    exact_code = df2[df2["__cod"] == q]
+    if not exact_code.empty:
+        df2 = exact_code
+    else:
+        # ============================================================
+        # 2) Coincidencia en DESCRIPCIÓN por relevancia
+        # ============================================================
+
+        # Exacta de palabra
+        mask_exact_word = df2["__desc"].str.split().apply(lambda words: q in words)
+
+        # Prefijo
+        mask_prefix = df2["__desc"].str.contains(rf"\b{q}", regex=True, na=False)
+
+        # Parcial
+        mask_partial = df2["__desc"].str.contains(q, na=False)
+
+        # Orden de prioridad
+        df2 = df2[mask_exact_word | mask_prefix | mask_partial]
+
+        # Ordenar por relevancia
+        df2["__score"] = (
+            mask_exact_word.astype(int) * 3 +
+            mask_prefix.astype(int) * 2 +
+            mask_partial.astype(int) * 1
+        )
+        df2 = df2.sort_values("__score", ascending=False)
 
     if solo_stock:
         df2 = df2[df2[COL_STOCK] > 0]
@@ -140,30 +153,25 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
         precio = float(grupo[COL_PRECIO].max())
         valorizado = float(grupo[COL_VALORIZADO].sum())
 
-        item = ItemResponse(
-            codigo=str(codigo),
-            descripcion=str(descripcion),
-            marca="",
-            rubro="",
-            color="",
-            precio=precio,
-            valorizado=valorizado,
-            talles=talles,
+        items.append(
+            ItemResponse(
+                codigo=str(codigo),
+                descripcion=str(descripcion),
+                marca="",
+                rubro="",
+                color="",
+                precio=precio,
+                valorizado=valorizado,
+                talles=talles,
+            )
         )
-
-        items.append(item)
 
     return items
 
 
 # ============================================================
-# ENDPOINTS
+# ENDPOINT
 # ============================================================
-
-@app.get("/")
-def root():
-    return {"status": "ok", "message": "ORB STOCK backend activo"}
-
 
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(req: QueryRequest):
