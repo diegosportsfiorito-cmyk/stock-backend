@@ -1,5 +1,6 @@
 # main.py
 import os
+import io
 from typing import List
 
 import pandas as pd
@@ -7,13 +8,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
+
 # ============================================================
 # CONFIG
 # ============================================================
 
-EXCEL_PATH = os.getenv("EXCEL_PATH", "data/stock.xlsx")
+DRIVE_FOLDER_ID = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
-# Columnas reales de tu Excel
+# Columnas reales del Excel
 COL_CODIGO = "Artículo"
 COL_DESC = "Descripción"
 COL_TALLE = "Talle"
@@ -65,14 +68,30 @@ class QueryResponse(BaseModel):
 
 
 # ============================================================
-# CARGA DE EXCEL
+# CARGA DE EXCEL DESDE GOOGLE DRIVE (ARCHIVO MÁS RECIENTE)
 # ============================================================
 
-def load_excel() -> pd.DataFrame:
-    if not os.path.exists(EXCEL_PATH):
-        raise Exception(f"No se encontró el archivo Excel en: {EXCEL_PATH}")
+def load_excel_from_drive() -> pd.DataFrame:
+    archivos = listar_archivos_en_carpeta(DRIVE_FOLDER_ID)
 
-    df = pd.read_excel(EXCEL_PATH)
+    if not archivos:
+        raise Exception("No se encontraron archivos en la carpeta de Drive.")
+
+    # Filtrar solo archivos .xlsx
+    excel_files = [f for f in archivos if f["name"].lower().endswith(".xlsx")]
+    if not excel_files:
+        raise Exception("No se encontraron archivos .xlsx en la carpeta de Drive.")
+
+    # Ordenar por fecha de modificación (más reciente primero)
+    excel_files.sort(key=lambda x: x["modifiedTime"], reverse=True)
+
+    archivo_reciente = excel_files[0]
+    file_id = archivo_reciente["id"]
+
+    contenido = descargar_archivo_por_id(file_id)
+    buffer = io.BytesIO(contenido)
+
+    df = pd.read_excel(buffer)
 
     required = [
         COL_CODIGO,
@@ -148,6 +167,6 @@ def root():
 
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(req: QueryRequest):
-    df = load_excel()
+    df = load_excel_from_drive()
     items = procesar(df, req.question, req.solo_stock)
     return QueryResponse(items=items)
