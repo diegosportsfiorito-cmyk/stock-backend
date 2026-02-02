@@ -1,7 +1,7 @@
 # main.py
 import os
 import io
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 from fastapi import FastAPI
@@ -22,6 +22,11 @@ COL_TALLE = "Talle"
 COL_STOCK = "Cantidad"
 COL_PRECIO = "LISTA1"
 COL_VALORIZADO = "Valorizado LISTA1"
+
+# Opcionales (si existen en el Excel)
+COL_MARCA = "Marca"
+COL_RUBRO = "Rubro"
+COL_COLOR = "Color"
 
 # ============================================================
 # FASTAPI
@@ -44,6 +49,13 @@ app.add_middleware(
 class QueryRequest(BaseModel):
     question: str
     solo_stock: bool = False
+
+    # NUEVOS CAMPOS PARA FILTROS GLOBALES
+    filtros_globales: bool = False
+    marca: Optional[str] = None
+    rubro: Optional[str] = None
+    talle_desde: Optional[int] = None
+    talle_hasta: Optional[int] = None
 
 
 class TalleItem(BaseModel):
@@ -95,13 +107,59 @@ def load_excel_from_drive() -> pd.DataFrame:
 
 
 # ============================================================
-# LÓGICA DE BÚSQUEDA INTELIGENTE
+# LÓGICA DE BÚSQUEDA INTELIGENTE + FILTROS GLOBALES
 # ============================================================
 
-def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
-    q = query.strip().upper()
-
+def aplicar_filtros_globales(df: pd.DataFrame, req: QueryRequest) -> pd.DataFrame:
+    """
+    Aplica filtros sobre el TOTAL del Excel:
+    - marca
+    - rubro
+    - rango de talles
+    sin tocar todavía la lógica de búsqueda por texto.
+    """
     df2 = df.copy()
+
+    if not req.filtros_globales:
+        return df2
+
+    # Marca
+    if req.marca and COL_MARCA in df2.columns:
+        df2 = df2[df2[COL_MARCA].astype(str) == str(req.marca)]
+
+    # Rubro
+    if req.rubro and COL_RUBRO in df2.columns:
+        df2 = df2[df2[COL_RUBRO].astype(str) == str(req.rubro)]
+
+    # Rango de talles
+    if (req.talle_desde is not None or req.talle_hasta is not None) and COL_TALLE in df2.columns:
+        # Intentamos convertir a numérico para poder comparar rangos
+        df2["__talle_num"] = pd.to_numeric(df2[COL_TALLE], errors="coerce")
+
+        if req.talle_desde is not None:
+            df2 = df2[df2["__talle_num"] >= req.talle_desde]
+
+        if req.talle_hasta is not None:
+            df2 = df2[df2["__talle_num"] <= req.talle_hasta]
+
+    return df2
+
+
+def procesar(df: pd.DataFrame, req: QueryRequest):
+    """
+    Mantiene tu lógica original de búsqueda,
+    pero ahora recibe el objeto completo `req` para usar filtros globales.
+    """
+    # 1) Aplicar filtros globales sobre el TOTAL del Excel
+    df2 = aplicar_filtros_globales(df, req)
+
+    q = req.question.strip().upper()
+
+    # Si después de filtros globales no queda nada, devolvemos vacío
+    if df2.empty:
+        return []
+
+    # Campos auxiliares para búsqueda
     df2["__desc"] = df2[COL_DESC].astype(str).str.upper()
     df2["__cod"] = df2[COL_CODIGO].astype(str).str.upper()
 
@@ -125,8 +183,11 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
         # Parcial
         mask_partial = df2["__desc"].str.contains(q, na=False)
 
-        # Orden de prioridad
+        # Filtrar por alguna coincidencia
         df2 = df2[mask_exact_word | mask_prefix | mask_partial]
+
+        if df2.empty:
+            return []
 
         # Ordenar por relevancia
         df2["__score"] = (
@@ -136,7 +197,8 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
         )
         df2 = df2.sort_values("__score", ascending=False)
 
-    if solo_stock:
+    # Filtro solo stock
+    if req.solo_stock:
         df2 = df2[df2[COL_STOCK] > 0]
 
     if df2.empty:
@@ -144,6 +206,7 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
 
     items = []
 
+    # Agrupamos por código + descripción (como antes)
     for (codigo, descripcion), grupo in df2.groupby([COL_CODIGO, COL_DESC]):
         talles = [
             TalleItem(talle=str(row[COL_TALLE]), stock=int(row[COL_STOCK]))
@@ -153,13 +216,29 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
         precio = float(grupo[COL_PRECIO].max())
         valorizado = float(grupo[COL_VALORIZADO].sum())
 
+        # Intentamos leer marca/rubro/color si existen en el Excel
+        if COL_MARCA in grupo.columns:
+            marca = str(grupo[COL_MARCA].iloc[0])
+        else:
+            marca = ""
+
+        if COL_RUBRO in grupo.columns:
+            rubro = str(grupo[COL_RUBRO].iloc[0])
+        else:
+            rubro = ""
+
+        if COL_COLOR in grupo.columns:
+            color = str(grupo[COL_COLOR].iloc[0])
+        else:
+            color = ""
+
         items.append(
             ItemResponse(
                 codigo=str(codigo),
                 descripcion=str(descripcion),
-                marca="",
-                rubro="",
-                color="",
+                marca=marca,
+                rubro=rubro,
+                color=color,
                 precio=precio,
                 valorizado=valorizado,
                 talles=talles,
@@ -176,5 +255,5 @@ def procesar(df: pd.DataFrame, query: str, solo_stock: bool):
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(req: QueryRequest):
     df = load_excel_from_drive()
-    items = procesar(df, req.question, req.solo_stock)
+    items = procesar(df, req)
     return QueryResponse(items=items)
