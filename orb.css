@@ -1,0 +1,107 @@
+/* ============================================================
+   ORB — Módulo visual premium
+============================================================ */
+
+/* Variables del ORB */
+:root {
+  --orb-color: #4fc3f7;
+  --orb-color-dark: #7c4dff;
+  --orb-spin-speed: 6s;
+  --orb-pulse-speed: 3s;
+}
+
+/* Contenedor */
+.orb-wrapper {
+  position: relative;
+  width: 70px;
+  height: 70px;
+  flex-shrink: 0;
+}
+
+/* ORB base */
+.orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 20%, var(--orb-color), #1d4ed8 40%, #020617 100%);
+  box-shadow:
+    0 0 25px var(--orb-color),
+    0 0 60px rgba(37, 99, 235, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e5e7eb;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  border: 1px solid rgba(191, 219, 254, 0.4);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
+}
+
+/* ============================================================
+   1) RESPIRACIÓN
+============================================================ */
+@keyframes orb-breathe {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.orb-breathe {
+  animation: orb-breathe var(--orb-pulse-speed) ease-in-out infinite;
+}
+
+/* ============================================================
+   2) GIRO
+============================================================ */
+@keyframes orb-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.orb-spin {
+  animation: orb-spin var(--orb-spin-speed) linear infinite;
+}
+
+/* ============================================================
+   3) HALO DINÁMICO
+============================================================ */
+.orb-halo {
+  box-shadow:
+    0 0 35px var(--orb-color),
+    0 0 80px var(--orb-color-dark);
+}
+
+/* ============================================================
+   4) LATIDO (error de conexión)
+============================================================ */
+@keyframes orb-heartbeat {
+  0%   { transform: scale(1); }
+  20%  { transform: scale(1.15); }
+  40%  { transform: scale(1); }
+  60%  { transform: scale(1.15); }
+  80%  { transform: scale(1); }
+  100% { transform: scale(1); }
+}
+
+.orb-error {
+  animation: orb-heartbeat 1.2s ease-in-out infinite;
+  background: radial-gradient(circle at 30% 20%, #ff4f6a, #b91c1c 40%, #020617 100%);
+  box-shadow:
+    0 0 35px #ff4f6a,
+    0 0 80px rgba(255, 0, 0, 0.8);
+}
+
+/* ============================================================
+   5) ANIMACIÓN DE CARGA (buscando)
+============================================================ */
+@keyframes orb-loading {
+  0%   { transform: scale(1) rotate(0deg); }
+  50%  { transform: scale(1.08) rotate(180deg); }
+  100% { transform: scale(1) rotate(360deg); }
+}
+
+.orb-loading {
+  animation: orb-loading 1.4s ease-in-out infinite;
+  background: radial-gradient(circle at 30% 20%, #4f8cff, #2563eb 40%, #020617 100%);
+}
