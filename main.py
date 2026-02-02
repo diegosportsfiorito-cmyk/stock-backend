@@ -1,5 +1,4 @@
 # main.py
-import os
 import io
 from typing import List, Optional
 
@@ -148,61 +147,72 @@ def aplicar_filtros_globales(df: pd.DataFrame, req: QueryRequest) -> pd.DataFram
 def procesar(df: pd.DataFrame, req: QueryRequest):
     """
     Mantiene tu lógica original de búsqueda,
-    pero ahora recibe el objeto completo `req` para usar filtros globales.
+    pero ahora recibe el objeto completo `req` para usar filtros globales
+    y soporta consultas solo por filtros (question vacío).
     """
     # 1) Aplicar filtros globales sobre el TOTAL del Excel
     df2 = aplicar_filtros_globales(df, req)
 
-    q = req.question.strip().upper()
-
     # Si después de filtros globales no queda nada, devolvemos vacío
     if df2.empty:
         return []
+
+    q = req.question.strip().upper()
 
     # Campos auxiliares para búsqueda
     df2["__desc"] = df2[COL_DESC].astype(str).str.upper()
     df2["__cod"] = df2[COL_CODIGO].astype(str).str.upper()
 
     # ============================================================
-    # 1) Coincidencia EXACTA en ARTÍCULO (código)
+    # CASO 1: SOLO FILTROS (question vacío)
     # ============================================================
-    exact_code = df2[df2["__cod"] == q]
-    if not exact_code.empty:
-        df2 = exact_code
+    if not q:
+        if req.solo_stock:
+            df2 = df2[df2[COL_STOCK] > 0]
+        if df2.empty:
+            return []
     else:
         # ============================================================
-        # 2) Coincidencia en DESCRIPCIÓN por relevancia
+        # CASO 2: BÚSQUEDA POR TEXTO + FILTROS
+        # 1) Coincidencia EXACTA en ARTÍCULO (código)
         # ============================================================
+        exact_code = df2[df2["__cod"] == q]
+        if not exact_code.empty:
+            df2 = exact_code
+        else:
+            # ============================================================
+            # 2) Coincidencia en DESCRIPCIÓN por relevancia
+            # ============================================================
 
-        # Exacta de palabra
-        mask_exact_word = df2["__desc"].str.split().apply(lambda words: q in words)
+            # Exacta de palabra
+            mask_exact_word = df2["__desc"].str.split().apply(lambda words: q in words)
 
-        # Prefijo
-        mask_prefix = df2["__desc"].str.contains(rf"\b{q}", regex=True, na=False)
+            # Prefijo
+            mask_prefix = df2["__desc"].str.contains(rf"\b{q}", regex=True, na=False)
 
-        # Parcial
-        mask_partial = df2["__desc"].str.contains(q, na=False)
+            # Parcial
+            mask_partial = df2["__desc"].str.contains(q, na=False)
 
-        # Filtrar por alguna coincidencia
-        df2 = df2[mask_exact_word | mask_prefix | mask_partial]
+            # Filtrar por alguna coincidencia
+            df2 = df2[mask_exact_word | mask_prefix | mask_partial]
+
+            if df2.empty:
+                return []
+
+            # Ordenar por relevancia
+            df2["__score"] = (
+                mask_exact_word.astype(int) * 3 +
+                mask_prefix.astype(int) * 2 +
+                mask_partial.astype(int) * 1
+            )
+            df2 = df2.sort_values("__score", ascending=False)
+
+        # Filtro solo stock
+        if req.solo_stock:
+            df2 = df2[df2[COL_STOCK] > 0]
 
         if df2.empty:
             return []
-
-        # Ordenar por relevancia
-        df2["__score"] = (
-            mask_exact_word.astype(int) * 3 +
-            mask_prefix.astype(int) * 2 +
-            mask_partial.astype(int) * 1
-        )
-        df2 = df2.sort_values("__score", ascending=False)
-
-    # Filtro solo stock
-    if req.solo_stock:
-        df2 = df2[df2[COL_STOCK] > 0]
-
-    if df2.empty:
-        return []
 
     items = []
 
