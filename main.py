@@ -1,4 +1,3 @@
-# main.py
 import io
 from typing import List, Optional
 
@@ -15,12 +14,15 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 app = FastAPI(title="STOCK IA PRO Backend")
 
+# CORS COMPLETO (GitHub Pages + Render)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],          # Podés reemplazar "*" por tu dominio exacto si querés
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],         # IMPORTANTE para GitHub Pages
+    max_age=3600,                 # IMPORTANTE para preflight OPTIONS
 )
 
 # ============================================================
@@ -74,20 +76,17 @@ def load_excel_from_drive() -> pd.DataFrame:
 
     df = pd.read_excel(buffer)
 
-    # ============================================================
-    # MAPEO REAL DE TU EXCEL (por posición)
-    # ============================================================
-
+    # Mapeo real del Excel
     df.columns = [
-        "Marca",            # Col 1
-        "Rubro",            # Col 2
-        "Artículo",         # Col 3
-        "Descripción",      # Col 4
-        "Color",            # Col 5
-        "Talle",            # Col 6
-        "Cantidad",         # Col 7
-        "LISTA1",           # Col 8
-        "Valorizado LISTA1" # Col 9
+        "Marca",
+        "Rubro",
+        "Artículo",
+        "Descripción",
+        "Color",
+        "Talle",
+        "Cantidad",
+        "LISTA1",
+        "Valorizado LISTA1"
     ]
 
     return df
@@ -137,9 +136,7 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
-    # ============================================================
-    # SOLO FILTROS (sin texto)
-    # ============================================================
+    # SOLO FILTROS
     if not q:
         if req.solo_stock:
             df2 = df2[df2["Cantidad"] > 0]
@@ -174,10 +171,7 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
         if df2.empty:
             return []
 
-    # ============================================================
     # ARMADO DE RESPUESTA
-    # ============================================================
-
     items = []
 
     for (codigo, descripcion), grupo in df2.groupby(["Artículo", "Descripción"]):
