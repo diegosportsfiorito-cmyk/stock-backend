@@ -14,15 +14,14 @@ from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 app = FastAPI(title="STOCK IA PRO Backend")
 
-# CORS COMPLETO (GitHub Pages + Render)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # Podés reemplazar "*" por tu dominio exacto si querés
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],         # IMPORTANTE para GitHub Pages
-    max_age=3600,                 # IMPORTANTE para preflight OPTIONS
+    expose_headers=["*"],
+    max_age=3600,
 )
 
 # ============================================================
@@ -36,8 +35,14 @@ class QueryRequest(BaseModel):
     filtros_globales: bool = False
     marca: Optional[str] = None
     rubro: Optional[str] = None
-    talle_desde: Optional[int] = None
-    talle_hasta: Optional[int] = None
+
+    # camelCase
+    talleDesde: Optional[int] = None
+    talleHasta: Optional[int] = None
+
+    # nuevos filtros
+    soloUltimo: bool = False
+    soloNegativo: bool = False
 
 
 class TalleItem(BaseModel):
@@ -76,7 +81,6 @@ def load_excel_from_drive() -> pd.DataFrame:
 
     df = pd.read_excel(buffer)
 
-    # Mapeo real del Excel
     df.columns = [
         "Marca",
         "Rubro",
@@ -108,14 +112,14 @@ def aplicar_filtros_globales(df: pd.DataFrame, req: QueryRequest) -> pd.DataFram
     if req.rubro:
         df2 = df2[df2["Rubro"].astype(str) == str(req.rubro)]
 
-    if req.talle_desde is not None or req.talle_hasta is not None:
+    if req.talleDesde is not None or req.talleHasta is not None:
         df2["__talle_num"] = pd.to_numeric(df2["Talle"], errors="coerce")
 
-        if req.talle_desde is not None:
-            df2 = df2[df2["__talle_num"] >= req.talle_desde]
+        if req.talleDesde is not None:
+            df2 = df2[df2["__talle_num"] >= req.talleDesde]
 
-        if req.talle_hasta is not None:
-            df2 = df2[df2["__talle_num"] <= req.talle_hasta]
+        if req.talleHasta is not None:
+            df2 = df2[df2["__talle_num"] <= req.talleHasta]
 
     return df2
 
@@ -133,17 +137,22 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 
     q = req.question.strip().upper()
 
+    # Si hay filtros especiales, ignoramos question
+    if req.soloUltimo or req.soloNegativo:
+        q = ""
+
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
-    # SOLO FILTROS
+    # SOLO FILTROS (sin question)
     if not q:
         if req.solo_stock:
             df2 = df2[df2["Cantidad"] > 0]
+
         if df2.empty:
             return []
+
     else:
-        # Coincidencia exacta por artículo
         exact_code = df2[df2["__cod"] == q]
         if not exact_code.empty:
             df2 = exact_code
@@ -171,10 +180,21 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
         if df2.empty:
             return []
 
-    # ARMADO DE RESPUESTA
+    # ============================================================
+    # FILTROS ESPECIALES: ULTIMO / NEGATIVO
+    # ============================================================
+
     items = []
 
     for (codigo, descripcion), grupo in df2.groupby(["Artículo", "Descripción"]):
+
+        total_stock = int(grupo["Cantidad"].sum())
+
+        if req.soloUltimo and total_stock != 1:
+            continue
+
+        if req.soloNegativo and total_stock >= 0:
+            continue
 
         talles = [
             TalleItem(talle=str(row["Talle"]), stock=int(row["Cantidad"]))
