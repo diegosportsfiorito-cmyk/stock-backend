@@ -84,11 +84,9 @@ def load_excel_smart() -> pd.DataFrame:
 
     newest = excel_files[0]
 
-    # Si el archivo NO cambió → usar cache
     if last_file_id == newest["id"] and df_global is not None:
         return df_global
 
-    # Si cambió → descargar y recargar
     contenido = descargar_archivo_por_id(newest["id"])
     buffer = io.BytesIO(contenido)
 
@@ -236,7 +234,48 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 
 
 # ============================================================
-# ENDPOINT
+# ENDPOINT: CATALOGO (NECESARIO PARA EL FRONTEND)
+# ============================================================
+
+@app.get("/catalog")
+async def get_catalog():
+    df = load_excel_smart()
+
+    marcas = sorted(set(df["Marca"].astype(str)))
+    rubros = sorted(set(df["Rubro"].astype(str)))
+
+    resumen = {
+        "archivo": "Google Drive",
+        "fecha": "Automático",
+        "marcas": len(marcas),
+        "rubros": len(rubros),
+        "articulos": len(df),
+        "stock_total": int(df["Cantidad"].sum()),
+        "stock_negativo": int((df["Cantidad"] < 0).sum())
+    }
+
+    items = []
+    for _, row in df.iterrows():
+        items.append({
+            "marca": str(row["Marca"]),
+            "rubro": str(row["Rubro"]),
+            "codigo": str(row["Artículo"]),
+            "descripcion": str(row["Descripción"]),
+            "color": str(row["Color"]),
+            "talle": str(row["Talle"]),
+            "stock": int(row["Cantidad"]),
+            "precio": float(row["LISTA1"]),
+            "valorizado": float(row["Valorizado LISTA1"])
+        })
+
+    return {
+        "items": items,
+        "resumen": resumen
+    }
+
+
+# ============================================================
+# ENDPOINT: QUERY PRINCIPAL
 # ============================================================
 
 @app.post("/query", response_model=QueryResponse)
