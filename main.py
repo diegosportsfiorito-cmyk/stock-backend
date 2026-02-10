@@ -36,11 +36,9 @@ class QueryRequest(BaseModel):
     marca: Optional[str] = None
     rubro: Optional[str] = None
 
-    # camelCase
     talleDesde: Optional[int] = None
     talleHasta: Optional[int] = None
 
-    # nuevos filtros
     soloUltimo: bool = False
     soloNegativo: bool = False
 
@@ -66,17 +64,32 @@ class QueryResponse(BaseModel):
 
 
 # ============================================================
-# CARGA DE EXCEL DESDE GOOGLE DRIVE
+# CACHE GLOBAL
 # ============================================================
 
-def load_excel_from_drive() -> pd.DataFrame:
-    archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-")
+df_global = None
+last_file_id = None
 
+
+# ============================================================
+# CARGA INTELIGENTE DESDE GOOGLE DRIVE
+# ============================================================
+
+def load_excel_smart() -> pd.DataFrame:
+    global df_global, last_file_id
+
+    archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-")
     excel_files = [f for f in archivos if f["name"].lower().endswith(".xlsx")]
     excel_files.sort(key=lambda x: x["modifiedTime"], reverse=True)
 
-    file_id = excel_files[0]["id"]
-    contenido = descargar_archivo_por_id(file_id)
+    newest = excel_files[0]
+
+    # Si el archivo NO cambió → usar cache
+    if last_file_id == newest["id"] and df_global is not None:
+        return df_global
+
+    # Si cambió → descargar y recargar
+    contenido = descargar_archivo_por_id(newest["id"])
     buffer = io.BytesIO(contenido)
 
     df = pd.read_excel(buffer)
@@ -93,7 +106,11 @@ def load_excel_from_drive() -> pd.DataFrame:
         "Valorizado LISTA1"
     ]
 
-    return df
+    df_global = df
+    last_file_id = newest["id"]
+
+    print(">>> Excel actualizado desde Google Drive:", newest["name"])
+    return df_global
 
 
 # ============================================================
@@ -137,14 +154,12 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 
     q = req.question.strip().upper()
 
-    # Si hay filtros especiales, ignoramos question
     if req.soloUltimo or req.soloNegativo:
         q = ""
 
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
-    # SOLO FILTROS (sin question)
     if not q:
         if req.solo_stock:
             df2 = df2[df2["Cantidad"] > 0]
@@ -179,10 +194,6 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 
         if df2.empty:
             return []
-
-    # ============================================================
-    # FILTROS ESPECIALES: ULTIMO / NEGATIVO
-    # ============================================================
 
     items = []
 
@@ -231,11 +242,10 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(req: QueryRequest):
 
-    # 🔥 LOG AGREGADO — imprime exactamente lo que envía el frontend
     print("=== REQUEST RECIBIDO ===")
     print(req.dict())
     print("========================")
 
-    df = load_excel_from_drive()
+    df = load_excel_smart()
     items = procesar(df, req)
     return QueryResponse(items=items)
