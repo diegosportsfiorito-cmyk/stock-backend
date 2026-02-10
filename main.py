@@ -230,6 +230,12 @@ def procesar(df: pd.DataFrame, req: QueryRequest):
 
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(req: QueryRequest):
+
+    # 🔥 LOG AGREGADO — imprime exactamente lo que envía el frontend
+    print("=== REQUEST RECIBIDO ===")
+    print(req.dict())
+    print("========================")
+
     df = load_excel_from_drive()
     items = procesar(df, req)
     return QueryResponse(items=items)
