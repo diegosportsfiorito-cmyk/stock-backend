@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # ============================================================
-# ENDPOINT ROOT (OBLIGATORIO PARA RENDER)
+# ROOT / HEALTHCHECK
 # ============================================================
 
 @app.get("/")
@@ -37,7 +37,7 @@ async def root_head():
     return ""
 
 # ============================================================
-# ENDPOINT: PING (WARM-UP DEL FRONTEND)
+# PING
 # ============================================================
 
 @app.get("/ping")
@@ -49,7 +49,9 @@ async def ping():
 # ============================================================
 
 class QueryRequest(BaseModel):
-    question: str
+    # OJO: ahora es opcional y con default
+    question: Optional[str] = ""
+
     solo_stock: bool = False
 
     filtros_globales: bool = False
@@ -62,7 +64,13 @@ class QueryRequest(BaseModel):
     soloUltimo: bool = False
     soloNegativo: bool = False
 
-    # --- FIX CRÍTICO PARA EVITAR 422 ---
+    @field_validator("question", mode="before")
+    def normalize_question(cls, v):
+        if v is None:
+            return ""
+        v = str(v).strip()
+        return v
+
     @field_validator("talleDesde", "talleHasta", mode="before")
     def empty_to_none(cls, v):
         if v in ("", None):
