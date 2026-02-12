@@ -32,6 +32,10 @@ app.add_middleware(
 async def root():
     return {"status": "ok", "service": "stock-backend"}
 
+@app.head("/")
+async def root_head():
+    return ""
+
 # ============================================================
 # ENDPOINT: PING (WARM-UP DEL FRONTEND)
 # ============================================================
