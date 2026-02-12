@@ -2,9 +2,9 @@ import io
 from typing import List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
@@ -45,41 +45,8 @@ async def ping():
     return {"status": "ok"}
 
 # ============================================================
-# MODELOS
+# MODELOS DE SALIDA
 # ============================================================
-
-class QueryRequest(BaseModel):
-    # OJO: ahora es opcional y con default
-    question: Optional[str] = ""
-
-    solo_stock: bool = False
-
-    filtros_globales: bool = False
-    marca: Optional[str] = None
-    rubro: Optional[str] = None
-
-    talleDesde: Optional[int] = None
-    talleHasta: Optional[int] = None
-
-    soloUltimo: bool = False
-    soloNegativo: bool = False
-
-    @field_validator("question", mode="before")
-    def normalize_question(cls, v):
-        if v is None:
-            return ""
-        v = str(v).strip()
-        return v
-
-    @field_validator("talleDesde", "talleHasta", mode="before")
-    def empty_to_none(cls, v):
-        if v in ("", None):
-            return None
-        try:
-            return int(v)
-        except:
-            return None
-
 
 class TalleItem(BaseModel):
     talle: str
@@ -180,26 +147,31 @@ def load_excel_smart() -> pd.DataFrame:
 # FILTROS GLOBALES
 # ============================================================
 
-def aplicar_filtros_globales(df: pd.DataFrame, req: QueryRequest) -> pd.DataFrame:
+def aplicar_filtros_globales(df: pd.DataFrame, filtros: dict) -> pd.DataFrame:
     df2 = df.copy()
 
-    if not req.filtros_globales:
+    if not filtros.get("filtros_globales"):
         return df2
 
-    if req.marca:
-        df2 = df2[df2["Marca"].astype(str) == str(req.marca)]
+    marca = filtros.get("marca")
+    rubro = filtros.get("rubro")
+    talle_desde = filtros.get("talleDesde")
+    talle_hasta = filtros.get("talleHasta")
 
-    if req.rubro:
-        df2 = df2[df2["Rubro"].astype(str) == str(req.rubro)]
+    if marca:
+        df2 = df2[df2["Marca"].astype(str) == str(marca)]
 
-    if req.talleDesde is not None or req.talleHasta is not None:
+    if rubro:
+        df2 = df2[df2["Rubro"].astype(str) == str(rubro)]
+
+    if talle_desde is not None or talle_hasta is not None:
         df2["__talle_num"] = pd.to_numeric(df2["Talle"], errors="coerce")
 
-        if req.talleDesde is not None:
-            df2 = df2[df2["__talle_num"] >= req.talleDesde]
+        if talle_desde is not None:
+            df2 = df2[df2["__talle_num"] >= talle_desde]
 
-        if req.talleHasta is not None:
-            df2 = df2[df2["__talle_num"] <= req.talleHasta]
+        if talle_hasta is not None:
+            df2 = df2[df2["__talle_num"] <= talle_hasta]
 
     return df2
 
@@ -208,36 +180,39 @@ def aplicar_filtros_globales(df: pd.DataFrame, req: QueryRequest) -> pd.DataFram
 # PROCESAMIENTO PRINCIPAL
 # ============================================================
 
-def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
-    df2 = aplicar_filtros_globales(df, req)
+def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
+    df2 = aplicar_filtros_globales(df, filtros)
 
     if df2.empty:
         return []
 
-    q = (req.question or "").strip().upper()
+    question = (filtros.get("question") or "").strip().upper()
+    solo_stock = bool(filtros.get("solo_stock") or False)
+    solo_ultimo = bool(filtros.get("soloUltimo") or False)
+    solo_negativo = bool(filtros.get("soloNegativo") or False)
 
-    if req.soloUltimo or req.soloNegativo:
-        q = ""
+    if solo_ultimo or solo_negativo:
+        question = ""
 
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
-    if not q:
-        if req.solo_stock:
+    if not question:
+        if solo_stock:
             df2 = df2[df2["Cantidad"] > 0]
 
         if df2.empty:
             return []
     else:
-        exact_code = df2[df2["__cod"] == q]
+        exact_code = df2[df2["__cod"] == question]
         if not exact_code.empty:
             df2 = exact_code
         else:
             desc_series = df2["__desc"].fillna("")
 
-            mask_exact_word = desc_series.str.split().apply(lambda words: q in words)
-            mask_prefix = desc_series.str.contains(rf"\b{q}", regex=True, na=False)
-            mask_partial = desc_series.str.contains(q, na=False)
+            mask_exact_word = desc_series.str.split().apply(lambda words: question in words)
+            mask_prefix = desc_series.str.contains(rf"\b{question}", regex=True, na=False)
+            mask_partial = desc_series.str.contains(question, na=False)
 
             df2 = df2[mask_exact_word | mask_prefix | mask_partial]
 
@@ -252,7 +227,7 @@ def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
 
             df2 = df2.sort_values("__score", ascending=False)
 
-        if req.solo_stock:
+        if solo_stock:
             df2 = df2[df2["Cantidad"] > 0]
 
         if df2.empty:
@@ -263,10 +238,10 @@ def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
     for (codigo, descripcion), grupo in df2.groupby(["Artículo", "Descripción"]):
         total_stock = int(grupo["Cantidad"].sum())
 
-        if req.soloUltimo and total_stock != 1:
+        if solo_ultimo and total_stock != 1:
             continue
 
-        if req.soloNegativo and total_stock >= 0:
+        if solo_negativo and total_stock >= 0:
             continue
 
         talles = [
@@ -279,12 +254,12 @@ def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
 
         try:
             precio = float(precio_raw) if pd.notna(precio_raw) else 0.0
-        except:
+        except Exception:
             precio = 0.0
 
         try:
             valorizado = float(valorizado_raw) if pd.notna(valorizado_raw) else 0.0
-        except:
+        except Exception:
             valorizado = 0.0
 
         marca = str(grupo["Marca"].iloc[0])
@@ -358,20 +333,54 @@ async def get_catalog():
 
 
 # ============================================================
-# ENDPOINT: QUERY PRINCIPAL
+# ENDPOINT: QUERY PRINCIPAL (SIN 422)
 # ============================================================
 
 @app.post("/query", response_model=QueryResponse)
-async def query_stock(req: QueryRequest):
+async def query_stock(request: Request):
     try:
-        print("=== REQUEST RECIBIDO ===")
-        print(req.dict())
-        print("========================")
+        raw = await request.json()
+        print("=== RAW REQUEST RECIBIDO ===")
+        print(raw)
+        print("================================")
+
+        # Normalización defensiva
+        filtros = {
+            "question": (raw.get("question") or "").strip(),
+            "solo_stock": bool(raw.get("solo_stock") or False),
+            "filtros_globales": bool(raw.get("filtros_globales") or False),
+            "marca": raw.get("marca") or None,
+            "rubro": raw.get("rubro") or None,
+            "talleDesde": None,
+            "talleHasta": None,
+            "soloUltimo": bool(raw.get("soloUltimo") or False),
+            "soloNegativo": bool(raw.get("soloNegativo") or False),
+        }
+
+        # Talles: convertir a int o None
+        try:
+            v = raw.get("talleDesde", None)
+            if v in ("", None):
+                filtros["talleDesde"] = None
+            else:
+                filtros["talleDesde"] = int(v)
+        except Exception:
+            filtros["talleDesde"] = None
+
+        try:
+            v = raw.get("talleHasta", None)
+            if v in ("", None):
+                filtros["talleHasta"] = None
+            else:
+                filtros["talleHasta"] = int(v)
+        except Exception:
+            filtros["talleHasta"] = None
 
         df = load_excel_smart()
-        items = procesar(df, req)
+        items = procesar(df, filtros)
         return QueryResponse(items=items)
 
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
+        # Nunca 422: si algo explota, devolvemos 500 controlado
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
