@@ -25,7 +25,15 @@ app.add_middleware(
 )
 
 # ============================================================
-# ENDPOINT: PING (OBLIGATORIO PARA EL FRONTEND)
+# ENDPOINT ROOT (OBLIGATORIO PARA RENDER)
+# ============================================================
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "stock-backend"}
+
+# ============================================================
+# ENDPOINT: PING (WARM-UP DEL FRONTEND)
 # ============================================================
 
 @app.get("/ping")
