@@ -4,7 +4,7 @@ from typing import List, Optional
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from drive import listar_archivos_en_carpeta, descargar_archivo_por_id
 
@@ -49,6 +49,16 @@ class QueryRequest(BaseModel):
 
     soloUltimo: bool = False
     soloNegativo: bool = False
+
+    # --- FIX CRÍTICO PARA EVITAR 422 ---
+    @field_validator("talleDesde", "talleHasta", mode="before")
+    def empty_to_none(cls, v):
+        if v in ("", None):
+            return None
+        try:
+            return int(v)
+        except:
+            return None
 
 
 class TalleItem(BaseModel):
