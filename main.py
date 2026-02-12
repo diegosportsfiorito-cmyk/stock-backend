@@ -25,6 +25,14 @@ app.add_middleware(
 )
 
 # ============================================================
+# ENDPOINT: PING (OBLIGATORIO PARA EL FRONTEND)
+# ============================================================
+
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
+
+# ============================================================
 # MODELOS
 # ============================================================
 
@@ -76,11 +84,6 @@ last_file_id: Optional[str] = None
 # ============================================================
 
 def load_excel_smart() -> pd.DataFrame:
-    """
-    Carga el Excel más reciente desde la carpeta de Drive.
-    Usa cache en memoria para evitar recargar si el archivo no cambió.
-    Endurecido para evitar errores tontos que generen 500.
-    """
     global df_global, last_file_id
 
     try:
@@ -90,7 +93,6 @@ def load_excel_smart() -> pd.DataFrame:
 
         if not excel_files:
             if df_global is not None:
-                # No hay archivos nuevos, pero tenemos cache previa
                 print(">>> WARNING: No se encontraron .xlsx en Drive, usando cache en memoria")
                 return df_global
             raise RuntimeError("No se encontraron archivos .xlsx en la carpeta de Drive")
@@ -109,7 +111,6 @@ def load_excel_smart() -> pd.DataFrame:
 
         df = pd.read_excel(buffer)
 
-        # Normalizamos columnas esperadas
         expected_cols = [
             "Marca",
             "Rubro",
@@ -142,7 +143,6 @@ def load_excel_smart() -> pd.DataFrame:
         if df_global is not None:
             print(">>> Usando df_global en cache como fallback")
             return df_global
-        # Si no hay cache, esto sí es crítico
         raise
 
 
@@ -203,7 +203,6 @@ def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
         if not exact_code.empty:
             df2 = exact_code
         else:
-            # Evitamos errores si hay NaN
             desc_series = df2["__desc"].fillna("")
 
             mask_exact_word = desc_series.str.split().apply(lambda words: q in words)
@@ -245,18 +244,17 @@ def procesar(df: pd.DataFrame, req: QueryRequest) -> List[ItemResponse]:
             for _, row in grupo.iterrows()
         ]
 
-        # Evitamos NaN en precio/valorizado
         precio_raw = grupo["LISTA1"].max()
         valorizado_raw = grupo["Valorizado LISTA1"].sum()
 
         try:
             precio = float(precio_raw) if pd.notna(precio_raw) else 0.0
-        except Exception:
+        except:
             precio = 0.0
 
         try:
             valorizado = float(valorizado_raw) if pd.notna(valorizado_raw) else 0.0
-        except Exception:
+        except:
             valorizado = 0.0
 
         marca = str(grupo["Marca"].iloc[0])
@@ -320,7 +318,6 @@ async def get_catalog():
                     }
                 )
             except Exception as e:
-                # Logueamos pero no rompemos todo el catálogo por una fila mala
                 print(">>> WARNING: fila inválida en /catalog:", repr(e))
 
         return {"items": items, "resumen": resumen}
