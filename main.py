@@ -74,6 +74,7 @@ class QueryResponse(BaseModel):
 
 df_global: Optional[pd.DataFrame] = None
 last_file_id: Optional[str] = None
+last_file_name: Optional[str] = None   # ← NUEVO
 
 
 # ============================================================
@@ -81,7 +82,7 @@ last_file_id: Optional[str] = None
 # ============================================================
 
 def load_excel_smart() -> pd.DataFrame:
-    global df_global, last_file_id
+    global df_global, last_file_id, last_file_name
 
     try:
         archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-")
@@ -95,6 +96,9 @@ def load_excel_smart() -> pd.DataFrame:
             raise RuntimeError("No se encontraron archivos .xlsx en la carpeta de Drive")
 
         newest = excel_files[0]
+
+        # Guardar nombre real del archivo
+        last_file_name = newest.get("name")
 
         if last_file_id == newest.get("id") and df_global is not None:
             return df_global
@@ -132,7 +136,7 @@ def load_excel_smart() -> pd.DataFrame:
         df_global = df
         last_file_id = file_id
 
-        print(">>> Excel actualizado desde Google Drive:", newest.get("name"))
+        print(">>> Excel actualizado desde Google Drive:", last_file_name)
         return df_global
 
     except Exception as e:
@@ -295,7 +299,7 @@ async def get_catalog():
         rubros = sorted(set(df["Rubro"].astype(str)))
 
         resumen = {
-            "archivo": "Google Drive",
+            "archivo": last_file_name or "No informado",   # ← CORREGIDO
             "fecha": "Automático",
             "marcas": len(marcas),
             "rubros": len(rubros),
@@ -344,7 +348,6 @@ async def query_stock(request: Request):
         print(raw)
         print("================================")
 
-        # Normalización defensiva
         filtros = {
             "question": (raw.get("question") or "").strip(),
             "solo_stock": bool(raw.get("solo_stock") or False),
@@ -357,22 +360,15 @@ async def query_stock(request: Request):
             "soloNegativo": bool(raw.get("soloNegativo") or False),
         }
 
-        # Talles: convertir a int o None
         try:
             v = raw.get("talleDesde", None)
-            if v in ("", None):
-                filtros["talleDesde"] = None
-            else:
-                filtros["talleDesde"] = int(v)
+            filtros["talleDesde"] = None if v in ("", None) else int(v)
         except Exception:
             filtros["talleDesde"] = None
 
         try:
             v = raw.get("talleHasta", None)
-            if v in ("", None):
-                filtros["talleHasta"] = None
-            else:
-                filtros["talleHasta"] = int(v)
+            filtros["talleHasta"] = None if v in ("", None) else int(v)
         except Exception:
             filtros["talleHasta"] = None
 
@@ -382,5 +378,4 @@ async def query_stock(request: Request):
 
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
-        # Nunca 422: si algo explota, devolvemos 500 controlado
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
