@@ -85,7 +85,10 @@ def load_excel_smart() -> pd.DataFrame:
     global df_global, last_file_id, last_file_name
 
     try:
-        archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7X8BdacCGB3SZK4O-")
+        # FOLDER ID CORRECTO
+        folder_id = "1F0FUEMJmeHgb3ZY7X8BdacCGB3SZK4O-"
+
+        archivos = listar_archivos_en_carpeta(folder_id)
         excel_files = [f for f in archivos if f.get("name", "").lower().endswith(".xlsx")]
         excel_files.sort(key=lambda x: x.get("modifiedTime", ""), reverse=True)
 
