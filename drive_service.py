@@ -7,25 +7,36 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+
+# ============================================================
+# CONFIGURACIÓN
+# ============================================================
+
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-SERVICE_ACCOUNT_PATH = "/etc/secrets/service_account.json"
+# Ahora la ruta viene desde Azure (variable de entorno)
+SERVICE_ACCOUNT_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 
 
 # ============================================================
-# SERVICIO DRIVE (ROBUSTO)
+# VALIDACIÓN DE CREDENCIALES
 # ============================================================
 
 def _get_drive_service():
     """
-    Crea el cliente de Google Drive.
-    Endurecido para evitar que el backend explote si falta el archivo.
+    Inicializa el cliente de Google Drive usando la ruta definida
+    en GOOGLE_APPLICATION_CREDENTIALS.
     """
+
+    if not SERVICE_ACCOUNT_PATH:
+        raise RuntimeError(
+            "La variable GOOGLE_APPLICATION_CREDENTIALS no está configurada."
+        )
 
     if not os.path.exists(SERVICE_ACCOUNT_PATH):
         raise RuntimeError(
             f"Archivo de credenciales no encontrado: {SERVICE_ACCOUNT_PATH}. "
-            "Asegurate de configurar un Secret File en Render."
+            "Asegurate de subir el archivo service_account.json al App Service."
         )
 
     try:
@@ -44,13 +55,13 @@ def _get_drive_service():
 
 
 # ============================================================
-# LISTAR ARCHIVOS
+# LISTAR ARCHIVOS EN CARPETA
 # ============================================================
 
 def listar_archivos_en_carpeta(folder_id: str) -> List[Dict]:
     """
     Lista archivos dentro de una carpeta de Drive.
-    Endurecido para evitar errores silenciosos.
+    Devuelve lista vacía si algo falla.
     """
     try:
         service = _get_drive_service()
@@ -65,17 +76,16 @@ def listar_archivos_en_carpeta(folder_id: str) -> List[Dict]:
 
     except Exception as e:
         print(">>> ERROR en listar_archivos_en_carpeta:", repr(e))
-        return []  # devolvemos lista vacía para evitar crash
+        return []
 
 
 # ============================================================
-# DESCARGAR ARCHIVO
+# DESCARGAR ARCHIVO POR ID
 # ============================================================
 
 def descargar_archivo_por_id(file_id: str) -> bytes:
     """
     Descarga un archivo de Drive por ID.
-    Endurecido para evitar que el backend explote.
     """
     try:
         service = _get_drive_service()
