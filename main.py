@@ -74,7 +74,7 @@ class QueryResponse(BaseModel):
 
 df_global: Optional[pd.DataFrame] = None
 last_file_id: Optional[str] = None
-last_file_name: Optional[str] = None   # ← NUEVO
+last_file_name: Optional[str] = None
 
 
 # ============================================================
@@ -85,7 +85,7 @@ def load_excel_smart() -> pd.DataFrame:
     global df_global, last_file_id, last_file_name
 
     try:
-        archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-")
+        archivos = listar_archivos_en_carpeta("1F0FUEMJmeHgb3ZY7X8BdacCGB3SZK4O-")
         excel_files = [f for f in archivos if f.get("name", "").lower().endswith(".xlsx")]
         excel_files.sort(key=lambda x: x.get("modifiedTime", ""), reverse=True)
 
@@ -97,7 +97,6 @@ def load_excel_smart() -> pd.DataFrame:
 
         newest = excel_files[0]
 
-        # Guardar nombre real del archivo
         last_file_name = newest.get("name")
 
         if last_file_id == newest.get("id") and df_global is not None:
@@ -299,7 +298,7 @@ async def get_catalog():
         rubros = sorted(set(df["Rubro"].astype(str)))
 
         resumen = {
-            "archivo": last_file_name or "No informado",   # ← CORREGIDO
+            "archivo": last_file_name or "No informado",
             "fecha": "Automático",
             "marcas": len(marcas),
             "rubros": len(rubros),
@@ -337,7 +336,7 @@ async def get_catalog():
 
 
 # ============================================================
-# ENDPOINT: QUERY PRINCIPAL (SIN 422)
+# ENDPOINT: QUERY PRINCIPAL
 # ============================================================
 
 @app.post("/query", response_model=QueryResponse)
@@ -379,4 +378,3 @@ async def query_stock(request: Request):
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
-
