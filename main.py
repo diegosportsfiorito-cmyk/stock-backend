@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from drive_service import listar_archivos_en_carpeta, descargar_archivo_por_id
 
+
 # ============================================================
 # FASTAPI
 # ============================================================
@@ -24,6 +25,7 @@ app.add_middleware(
     max_age=3600,
 )
 
+
 # ============================================================
 # ROOT / HEALTHCHECK
 # ============================================================
@@ -32,17 +34,16 @@ app.add_middleware(
 async def root():
     return {"status": "ok", "service": "stock-backend"}
 
+
 @app.head("/")
 async def root_head():
     return ""
 
-# ============================================================
-# PING
-# ============================================================
 
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
+
 
 # ============================================================
 # MODELOS DE SALIDA
@@ -85,29 +86,31 @@ def load_excel_smart() -> pd.DataFrame:
     global df_global, last_file_id, last_file_name
 
     try:
-        # FOLDER ID CORRECTO
         folder_id = "1F0FUEMJmeHgb3ZY7X8BdacCGB3SZK4O-"
 
         archivos = listar_archivos_en_carpeta(folder_id)
-        excel_files = [f for f in archivos if f.get("name", "").lower().endswith(".xlsx")]
+        excel_files = [
+            f for f in archivos
+            if f.get("name", "").lower().endswith(".xlsx")
+        ]
+
         excel_files.sort(key=lambda x: x.get("modifiedTime", ""), reverse=True)
 
         if not excel_files:
             if df_global is not None:
-                print(">>> WARNING: No se encontraron .xlsx en Drive, usando cache en memoria")
+                print(">>> WARNING: No se encontraron .xlsx en Drive, usando cache")
                 return df_global
             raise RuntimeError("No se encontraron archivos .xlsx en la carpeta de Drive")
 
         newest = excel_files[0]
-
+        file_id = newest.get("id")
         last_file_name = newest.get("name")
 
-        if last_file_id == newest.get("id") and df_global is not None:
-            return df_global
-
-        file_id = newest.get("id")
         if not file_id:
             raise RuntimeError("El archivo más reciente no tiene ID válido")
+
+        if last_file_id == file_id and df_global is not None:
+            return df_global
 
         contenido = descargar_archivo_por_id(file_id)
         buffer = io.BytesIO(contenido)
@@ -128,7 +131,7 @@ def load_excel_smart() -> pd.DataFrame:
 
         if len(df.columns) < len(expected_cols):
             raise RuntimeError(
-                f"El Excel no tiene la cantidad esperada de columnas. "
+                f"El Excel no tiene columnas suficientes. "
                 f"Esperadas: {len(expected_cols)}, encontradas: {len(df.columns)}"
             )
 
@@ -193,9 +196,9 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
         return []
 
     question = (filtros.get("question") or "").strip().upper()
-    solo_stock = bool(filtros.get("solo_stock") or False)
-    solo_ultimo = bool(filtros.get("soloUltimo") or False)
-    solo_negativo = bool(filtros.get("soloNegativo") or False)
+    solo_stock = bool(filtros.get("solo_stock"))
+    solo_ultimo = bool(filtros.get("soloUltimo"))
+    solo_negativo = bool(filtros.get("soloNegativo"))
 
     if solo_ultimo or solo_negativo:
         question = ""
@@ -203,13 +206,7 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
-    if not question:
-        if solo_stock:
-            df2 = df2[df2["Cantidad"] > 0]
-
-        if df2.empty:
-            return []
-    else:
+    if question:
         exact_code = df2[df2["__cod"] == question]
         if not exact_code.empty:
             df2 = exact_code
@@ -233,11 +230,11 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
 
             df2 = df2.sort_values("__score", ascending=False)
 
-        if solo_stock:
-            df2 = df2[df2["Cantidad"] > 0]
+    if solo_stock:
+        df2 = df2[df2["Cantidad"] > 0]
 
-        if df2.empty:
-            return []
+    if df2.empty:
+        return []
 
     items: List[ItemResponse] = []
 
@@ -255,30 +252,16 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
             for _, row in grupo.iterrows()
         ]
 
-        precio_raw = grupo["LISTA1"].max()
-        valorizado_raw = grupo["Valorizado LISTA1"].sum()
-
-        try:
-            precio = float(precio_raw) if pd.notna(precio_raw) else 0.0
-        except Exception:
-            precio = 0.0
-
-        try:
-            valorizado = float(valorizado_raw) if pd.notna(valorizado_raw) else 0.0
-        except Exception:
-            valorizado = 0.0
-
-        marca = str(grupo["Marca"].iloc[0])
-        rubro = str(grupo["Rubro"].iloc[0])
-        color = str(grupo["Color"].iloc[0])
+        precio = float(grupo["LISTA1"].max() or 0)
+        valorizado = float(grupo["Valorizado LISTA1"].sum() or 0)
 
         items.append(
             ItemResponse(
                 codigo=str(codigo),
                 descripcion=str(descripcion),
-                marca=marca,
-                rubro=rubro,
-                color=color,
+                marca=str(grupo["Marca"].iloc[0]),
+                rubro=str(grupo["Rubro"].iloc[0]),
+                color=str(grupo["Color"].iloc[0]),
                 precio=precio,
                 valorizado=valorizado,
                 talles=talles,
@@ -323,9 +306,7 @@ async def get_catalog():
                         "talle": str(row["Talle"]),
                         "stock": int(row["Cantidad"]),
                         "precio": float(row["LISTA1"]) if pd.notna(row["LISTA1"]) else 0.0,
-                        "valorizado": float(row["Valorizado LISTA1"])
-                        if pd.notna(row["Valorizado LISTA1"])
-                        else 0.0,
+                        "valorizado": float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0,
                     }
                 )
             except Exception as e:
@@ -352,26 +333,26 @@ async def query_stock(request: Request):
 
         filtros = {
             "question": (raw.get("question") or "").strip(),
-            "solo_stock": bool(raw.get("solo_stock") or False),
-            "filtros_globales": bool(raw.get("filtros_globales") or False),
+            "solo_stock": bool(raw.get("solo_stock")),
+            "filtros_globales": bool(raw.get("filtros_globales")),
             "marca": raw.get("marca") or None,
             "rubro": raw.get("rubro") or None,
             "talleDesde": None,
             "talleHasta": None,
-            "soloUltimo": bool(raw.get("soloUltimo") or False),
-            "soloNegativo": bool(raw.get("soloNegativo") or False),
+            "soloUltimo": bool(raw.get("soloUltimo")),
+            "soloNegativo": bool(raw.get("soloNegativo")),
         }
 
         try:
-            v = raw.get("talleDesde", None)
+            v = raw.get("talleDesde")
             filtros["talleDesde"] = None if v in ("", None) else int(v)
-        except Exception:
+        except:
             filtros["talleDesde"] = None
 
         try:
-            v = raw.get("talleHasta", None)
+            v = raw.get("talleHasta")
             filtros["talleHasta"] = None if v in ("", None) else int(v)
-        except Exception:
+        except:
             filtros["talleHasta"] = None
 
         df = load_excel_smart()
