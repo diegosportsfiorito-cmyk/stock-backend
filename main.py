@@ -86,7 +86,7 @@ def load_excel_smart() -> pd.DataFrame:
     global df_global, last_file_id, last_file_name
 
     try:
-        folder_id = "1F0FUEMJmeHgb3ZY7X8BdacCGB3SZK4O-"
+        folder_id = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
 
         archivos = listar_archivos_en_carpeta(folder_id)
         excel_files = [
@@ -362,3 +362,4 @@ async def query_stock(request: Request):
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
+
