@@ -20,20 +20,26 @@ jobs:
         with:
           python-version: '3.10'
 
-      # Instalar dependencias en la carpeta que Azure sí usa
       - name: Install dependencies for Azure App Service
         run: |
           pip install --upgrade pip
           pip install --target="./.python_packages/lib/site-packages" -r requirements.txt
 
-      # Subir artefacto para el job de deploy
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
-            .
-            !antenv/
+            main.py
+            requirements.txt
+            .python_packages/
+            app/
+            routers/
+            services/
+            utils/
+            static/
+            templates/
+            # agrega aquí cualquier carpeta de tu backend
             !.github/
 
   deploy:
