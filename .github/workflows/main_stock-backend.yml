@@ -33,12 +33,7 @@ jobs:
             main.py
             requirements.txt
             .python_packages/
-            app/
-            routers/
-            services/
-            utils/
-            static/
-            templates/
+            *.py
             !.github/
 
   deploy:
