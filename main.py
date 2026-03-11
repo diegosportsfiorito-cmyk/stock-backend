@@ -13,6 +13,7 @@ from drive_service import listar_archivos_en_carpeta, descargar_archivo_por_id
 
 # stock-backend
 # redeploy test
+
 # ============================================================
 # FASTAPI
 # ============================================================
@@ -464,5 +465,6 @@ async def query_stock(request: Request):
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
+
 
 
