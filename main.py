@@ -1,10 +1,13 @@
 import io
+import json
+import datetime
 from typing import List, Optional
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import jwt
 
 from drive_service import listar_archivos_en_carpeta, descargar_archivo_por_id
 
@@ -24,6 +27,32 @@ app.add_middleware(
     expose_headers=["*"],
     max_age=3600,
 )
+
+
+# ============================================================
+# MIDDLEWARE JWT
+# ============================================================
+
+SECRET_KEY = "CAMBIAR_ESTA_CLAVE_POR_UNA_SEGURA"
+
+@app.middleware("http")
+async def verificar_token(request: Request, call_next):
+    # Endpoints públicos
+    if request.url.path in ["/", "/ping", "/login"]:
+        return await call_next(request)
+
+    auth = request.headers.get("Authorization")
+    if not auth:
+        raise HTTPException(status_code=401, detail="Token requerido")
+
+    token = auth.replace("Bearer ", "")
+
+    try:
+        request.state.user = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+
+    return await call_next(request)
 
 
 # ============================================================
@@ -153,6 +182,64 @@ def load_excel_smart() -> pd.DataFrame:
 
 
 # ============================================================
+# CARGA DE USUARIOS DESDE GOOGLE DRIVE
+# ============================================================
+
+def cargar_usuarios() -> list:
+    try:
+        folder_id = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
+        archivos = listar_archivos_en_carpeta(folder_id)
+
+        json_files = [
+            f for f in archivos
+            if f.get("name", "").lower() == "usuarios.json"
+        ]
+
+        if not json_files:
+            raise RuntimeError("No se encontró usuarios.json en Google Drive")
+
+        file_id = json_files[0]["id"]
+        contenido = descargar_archivo_por_id(file_id)
+        data = contenido.decode("utf-8")
+
+        return json.loads(data)
+
+    except Exception as e:
+        print(">>> ERROR al cargar usuarios.json:", repr(e))
+        raise RuntimeError("No se pudo cargar usuarios.json desde Drive")
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+@app.post("/login")
+async def login(request: Request):
+    try:
+        data = await request.json()
+        username = data.get("username")
+        password = data.get("password")
+
+        usuarios = cargar_usuarios()
+
+        for u in usuarios:
+            if u["username"] == username and u["password"] == password:
+                payload = {
+                    "username": username,
+                    "role": u["role"],
+                    "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)
+                }
+                token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+                return {"token": token, "role": u["role"]}
+
+        raise HTTPException(status_code=401, detail="Credenciales inválidas")
+
+    except Exception as e:
+        print(">>> ERROR en /login:", repr(e))
+        raise HTTPException(status_code=500, detail="Error en login")
+
+
+# ============================================================
 # FILTROS GLOBALES
 # ============================================================
 
@@ -276,8 +363,10 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
 # ============================================================
 
 @app.get("/catalog")
-async def get_catalog():
+async def get_catalog(request: Request):
     try:
+        role = request.state.user["role"]
+
         df = load_excel_smart()
 
         marcas = sorted(set(df["Marca"].astype(str)))
@@ -296,6 +385,10 @@ async def get_catalog():
         items = []
         for _, row in df.iterrows():
             try:
+                valorizado = float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0
+                if role != "admin":
+                    valorizado = 0.0
+
                 items.append(
                     {
                         "marca": str(row["Marca"]),
@@ -306,7 +399,7 @@ async def get_catalog():
                         "talle": str(row["Talle"]),
                         "stock": int(row["Cantidad"]),
                         "precio": float(row["LISTA1"]) if pd.notna(row["LISTA1"]) else 0.0,
-                        "valorizado": float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0,
+                        "valorizado": valorizado,
                     }
                 )
             except Exception as e:
@@ -326,6 +419,8 @@ async def get_catalog():
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(request: Request):
     try:
+        role = request.state.user["role"]
+
         raw = await request.json()
         print("=== RAW REQUEST RECIBIDO ===")
         print(raw)
@@ -357,9 +452,14 @@ async def query_stock(request: Request):
 
         df = load_excel_smart()
         items = procesar(df, filtros)
+
+        # Ocultar valorizado a vendedores
+        if role != "admin":
+            for item in items:
+                item.valorizado = 0.0
+
         return QueryResponse(items=items)
 
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
-
