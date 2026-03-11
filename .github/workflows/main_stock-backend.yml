@@ -30,10 +30,11 @@ jobs:
         with:
           name: python-app
           path: |
-            main.py
-            requirements.txt
             .python_packages/
             *.py
+            requirements.txt
+            render.yaml
+            style_config.json
             !.github/
 
   deploy:
