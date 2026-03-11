@@ -39,7 +39,6 @@ jobs:
             utils/
             static/
             templates/
-            # agrega aquí cualquier carpeta de tu backend
             !.github/
 
   deploy:
