@@ -20,22 +20,21 @@ jobs:
         with:
           python-version: '3.10'
 
+      # Instala dependencias dentro de .python_packages (lo que Azure sí usa)
       - name: Install dependencies for Azure App Service
         run: |
           pip install --upgrade pip
           pip install --target="./.python_packages/lib/site-packages" -r requirements.txt
 
+      # Sube TODO el backend excepto .github y cualquier entorno virtual
       - name: Upload artifact for deployment jobs
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: |
-            .python_packages/
-            *.py
-            requirements.txt
-            render.yaml
-            style_config.json
+            .
             !.github/
+            !antenv/
 
   deploy:
     runs-on: ubuntu-latest
