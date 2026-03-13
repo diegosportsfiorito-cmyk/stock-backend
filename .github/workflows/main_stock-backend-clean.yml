@@ -30,9 +30,18 @@ jobs:
         with:
           name: python-app
           path: |
-            .
-            !.github/
-            !antenv/
+            main.py
+            ai_engine.py
+            ai_openrouter.py
+            apply_style.py
+            drive_service.py
+            indexer.py
+            intent_engine.py
+            render.yaml
+            requirements.txt
+            style_config.json
+            style_manager.py
+            .python_packages/
 
   deploy:
     runs-on: ubuntu-latest
