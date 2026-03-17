@@ -93,7 +93,7 @@ last_file_id: Optional[str] = None
 last_file_name: Optional[str] = None
 
 # ============================================================
-# CARGA INTELIGENTE DESDE GOOGLE DRIVE
+# CARGA INTELIGENTE DESDE GOOGLE DRIVE (CON FIX DE COLUMNAS)
 # ============================================================
 
 def load_excel_smart() -> pd.DataFrame:
@@ -147,7 +147,7 @@ def load_excel_smart() -> pd.DataFrame:
         last_file_id = file_id
         return df_global
 
-    except Exception as e:
+    except Exception:
         if df_global is not None:
             return df_global
         raise
@@ -267,7 +267,7 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
 
     return items
 # ============================================================
-# ENDPOINT: CATALOGO
+# ENDPOINT: CATALOGO (ROBUSTO)
 # ============================================================
 
 @app.get("/catalog")
@@ -288,21 +288,36 @@ async def get_catalog(request: Request):
 
     items = []
     for _, row in df.iterrows():
-        val = float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0
-        if role != "admin":
-            val = 0.0
+        try:
+            marca = str(row.get("Marca", "") or "")
+            rubro = str(row.get("Rubro", "") or "")
+            codigo = str(row.get("Artículo", "") or "")
+            descripcion = str(row.get("Descripción", "") or "")
+            color = str(row.get("Color", "") or "")
+            talle = str(row.get("Talle", "") or "")
 
-        items.append({
-            "marca": str(row["Marca"]),
-            "rubro": str(row["Rubro"]),
-            "codigo": str(row["Artículo"]),
-            "descripcion": str(row["Descripción"]),
-            "color": str(row["Color"]),
-            "talle": str(row["Talle"]),
-            "stock": int(row["Cantidad"]),
-            "precio": float(row["LISTA1"]),
-            "valorizado": val,
-        })
+            stock = int(pd.to_numeric(row.get("Cantidad", 0), errors="coerce") or 0)
+            precio = float(pd.to_numeric(row.get("LISTA1", 0), errors="coerce") or 0)
+            valorizado = float(pd.to_numeric(row.get("Valorizado LISTA1", 0), errors="coerce") or 0)
+
+            if role != "admin":
+                valorizado = 0.0
+
+            items.append({
+                "marca": marca,
+                "rubro": rubro,
+                "codigo": codigo,
+                "descripcion": descripcion,
+                "color": color,
+                "talle": talle,
+                "stock": stock,
+                "precio": precio,
+                "valorizado": valorizado,
+            })
+
+        except Exception as e:
+            print(">>> WARNING: fila inválida en /catalog:", repr(e))
+            continue
 
     return {"items": items, "resumen": resumen}
 
