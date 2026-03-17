@@ -11,9 +11,6 @@ import jwt
 
 from drive_service import listar_archivos_en_carpeta, descargar_archivo_por_id
 
-# stock-backend
-# redeploy test
-
 # ============================================================
 # FASTAPI
 # ============================================================
@@ -38,7 +35,6 @@ SECRET_KEY = "CAMBIAR_ESTA_CLAVE_POR_UNA_SEGURA"
 
 @app.middleware("http")
 async def verificar_token(request: Request, call_next):
-    # Endpoints públicos
     if request.url.path in ["/", "/ping", "/login"]:
         return await call_next(request)
 
@@ -63,24 +59,17 @@ async def verificar_token(request: Request, call_next):
 async def root():
     return {"status": "ok", "service": "stock-backend"}
 
-
-@app.head("/")
-async def root_head():
-    return ""
-
-
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
 
 # ============================================================
-# MODELOS DE SALIDA
+# MODELOS
 # ============================================================
 
 class TalleItem(BaseModel):
     talle: str
     stock: int
-
 
 class ItemResponse(BaseModel):
     codigo: str
@@ -91,7 +80,6 @@ class ItemResponse(BaseModel):
     precio: float
     valorizado: float
     talles: List[TalleItem]
-
 
 class QueryResponse(BaseModel):
     items: List[ItemResponse]
@@ -113,8 +101,8 @@ def load_excel_smart() -> pd.DataFrame:
 
     try:
         folder_id = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
-
         archivos = listar_archivos_en_carpeta(folder_id)
+
         excel_files = [
             f for f in archivos
             if f.get("name", "").lower().endswith(".xlsx")
@@ -124,16 +112,12 @@ def load_excel_smart() -> pd.DataFrame:
 
         if not excel_files:
             if df_global is not None:
-                print(">>> WARNING: No se encontraron .xlsx en Drive, usando cache")
                 return df_global
-            raise RuntimeError("No se encontraron archivos .xlsx en la carpeta de Drive")
+            raise RuntimeError("No se encontraron archivos .xlsx")
 
         newest = excel_files[0]
         file_id = newest.get("id")
         last_file_name = newest.get("name")
-
-        if not file_id:
-            raise RuntimeError("El archivo más reciente no tiene ID válido")
 
         if last_file_id == file_id and df_global is not None:
             return df_global
@@ -143,7 +127,11 @@ def load_excel_smart() -> pd.DataFrame:
 
         df = pd.read_excel(buffer)
 
-        expected_cols = [
+        # ============================================================
+        # FIX CRÍTICO: FORZAR 9 COLUMNAS EXACTAS
+        # ============================================================
+        df = df.iloc[:, :9]
+        df.columns = [
             "Marca",
             "Rubro",
             "Artículo",
@@ -155,117 +143,80 @@ def load_excel_smart() -> pd.DataFrame:
             "Valorizado LISTA1",
         ]
 
-        if len(df.columns) < len(expected_cols):
-            raise RuntimeError(
-                f"El Excel no tiene columnas suficientes. "
-                f"Esperadas: {len(expected_cols)}, encontradas: {len(df.columns)}"
-            )
-
-        df = df.iloc[:, : len(expected_cols)]
-        df.columns = expected_cols
-
         df_global = df
         last_file_id = file_id
-
-        print(">>> Excel actualizado desde Google Drive:", last_file_name)
         return df_global
 
     except Exception as e:
-        print(">>> ERROR en load_excel_smart:", repr(e))
         if df_global is not None:
-            print(">>> Usando df_global en cache como fallback")
             return df_global
         raise
-
-# ============================================================
-# CARGA DE USUARIOS DESDE GOOGLE DRIVE
-# ============================================================
-
-def cargar_usuarios() -> list:
-    try:
-        folder_id = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
-        archivos = listar_archivos_en_carpeta(folder_id)
-
-        json_files = [
-            f for f in archivos
-            if f.get("name", "").lower() == "usuarios.json"
-        ]
-
-        if not json_files:
-            raise RuntimeError("No se encontró usuarios.json en Google Drive")
-
-        file_id = json_files[0]["id"]
-        contenido = descargar_archivo_por_id(file_id)
-        data = contenido.decode("utf-8")
-
-        return json.loads(data)
-
-    except Exception as e:
-        print(">>> ERROR al cargar usuarios.json:", repr(e))
-        raise RuntimeError("No se pudo cargar usuarios.json desde Drive")
-
 # ============================================================
 # LOGIN
 # ============================================================
 
+def cargar_usuarios() -> list:
+    folder_id = "1F0FUEMJmeHgb3ZY7XBBdacCGB3SZK4O-"
+    archivos = listar_archivos_en_carpeta(folder_id)
+
+    json_files = [
+        f for f in archivos
+        if f.get("name", "").lower() == "usuarios.json"
+    ]
+
+    if not json_files:
+        raise RuntimeError("No se encontró usuarios.json")
+
+    file_id = json_files[0]["id"]
+    contenido = descargar_archivo_por_id(file_id)
+    return json.loads(contenido.decode("utf-8"))
+
 @app.post("/login")
 async def login(request: Request):
-    try:
-        data = await request.json()
-        username = data.get("username")
-        password = data.get("password")
+    data = await request.json()
+    username = data.get("username")
+    password = data.get("password")
 
-        usuarios = cargar_usuarios()
+    usuarios = cargar_usuarios()
 
-        for u in usuarios:
-            if u["username"] == username and u["password"] == password:
-                payload = {
-                    "username": username,
-                    "role": u["role"],
-                    "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)
-                }
-                token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-                return {"token": token, "role": u["role"]}
+    for u in usuarios:
+        if u["username"] == username and u["password"] == password:
+            payload = {
+                "username": username,
+                "role": u["role"],
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=12)
+            }
+            token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+            return {"token": token, "role": u["role"]}
 
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-
-    except Exception as e:
-        print(">>> ERROR en /login:", repr(e))
-        raise HTTPException(status_code=500, detail="Error en login")
+    raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
 # ============================================================
-# FILTROS GLOBALES
+# FILTROS
 # ============================================================
 
 def aplicar_filtros_globales(df: pd.DataFrame, filtros: dict) -> pd.DataFrame:
     df2 = df.copy()
 
-    if not filtros.get("filtros_globales"):
-        return df2
+    if filtros.get("marca"):
+        df2 = df2[df2["Marca"] == filtros["marca"]]
 
-    marca = filtros.get("marca")
-    rubro = filtros.get("rubro")
-    talle_desde = filtros.get("talleDesde")
-    talle_hasta = filtros.get("talleHasta")
+    if filtros.get("rubro"):
+        df2 = df2[df2["Rubro"] == filtros["rubro"]]
 
-    if marca:
-        df2 = df2[df2["Marca"].astype(str) == str(marca)]
-
-    if rubro:
-        df2 = df2[df2["Rubro"].astype(str) == str(rubro)]
-
-    if talle_desde is not None or talle_hasta is not None:
+    if filtros.get("talleDesde") is not None or filtros.get("talleHasta") is not None:
         df2["__talle_num"] = pd.to_numeric(df2["Talle"], errors="coerce")
 
-        if talle_desde is not None:
-            df2 = df2[df2["__talle_num"] >= talle_desde]
+        if filtros.get("talleDesde") is not None:
+            df2 = df2[df2["__talle_num"] >= filtros["talleDesde"]]
 
-        if talle_hasta is not None:
-            df2 = df2[df2["__talle_num"] <= talle_hasta]
+        if filtros.get("talleHasta") is not None:
+            df2 = df2[df2["__talle_num"] <= filtros["talleHasta"]]
 
     return df2
+
 # ============================================================
-# PROCESAMIENTO PRINCIPAL
+# PROCESAMIENTO PRINCIPAL (CORREGIDO)
 # ============================================================
 
 def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
@@ -275,73 +226,30 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
         return []
 
     question = (filtros.get("question") or "").strip().upper()
-    solo_stock = bool(filtros.get("solo_stock"))
-    solo_ultimo = bool(filtros.get("soloUltimo"))
-    solo_negativo = bool(filtros.get("soloNegativo"))
-
-    if solo_ultimo or solo_negativo:
-        question = ""
 
     df2["__desc"] = df2["Descripción"].astype(str).str.upper()
     df2["__cod"] = df2["Artículo"].astype(str).str.upper()
 
     if question:
-        exact_code = df2[df2["__cod"] == question]
-        if not exact_code.empty:
-            df2 = exact_code
+        exact = df2[df2["__cod"] == question]
+        if not exact.empty:
+            df2 = exact
         else:
-            desc_series = df2["__desc"].fillna("")
+            mask = df2["__desc"].str.contains(question, na=False)
+            df2 = df2[mask]
 
-            mask_exact_word = desc_series.str.split().apply(lambda words: question in words)
-            mask_prefix = desc_series.str.contains(rf"\b{question}", regex=True, na=False)
-            mask_partial = desc_series.str.contains(question, na=False)
-
-            df2 = df2[mask_exact_word | mask_prefix | mask_partial]
-
-            if df2.empty:
-                return []
-
-            df2["__score"] = (
-                mask_exact_word.astype(int) * 3
-                + mask_prefix.astype(int) * 2
-                + mask_partial.astype(int) * 1
-            )
-
-            df2 = df2.sort_values("__score", ascending=False)
-
-    if solo_stock:
-        df2 = df2[df2["Cantidad"] > 0]
-
-    if df2.empty:
-        return []
-
-    items: List[ItemResponse] = []
+    items = []
 
     for (codigo, descripcion), grupo in df2.groupby(["Artículo", "Descripción"]):
-        # Cantidades y precios numéricos, robustos
         cantidades = pd.to_numeric(grupo["Cantidad"], errors="coerce").fillna(0).astype(int)
         precios = pd.to_numeric(grupo["LISTA1"], errors="coerce").fillna(0).astype(float)
 
-        stock_total = int(cantidades.sum())
-
-        if solo_ultimo and stock_total != 1:
-            continue
-
-        if solo_negativo and stock_total >= 0:
-            continue
-
         talles = [
-            TalleItem(
-                talle=str(talle),
-                stock=int(stock),
-            )
-            for talle, stock in zip(grupo["Talle"], cantidades)
+            TalleItem(talle=str(t), stock=int(s))
+            for t, s in zip(grupo["Talle"], cantidades)
         ]
 
-        # Valorizado REAL: suma(Cantidad * LISTA1) por artículo
         valorizado = float((cantidades * precios).sum())
-
-        # Precio de referencia: si todos los talles tienen el mismo precio, usamos ese; si no, 0
         precio_ref = float(precios.iloc[0]) if len(set(precios.tolist())) == 1 else 0.0
 
         items.append(
@@ -358,107 +266,68 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
         )
 
     return items
-
 # ============================================================
 # ENDPOINT: CATALOGO
 # ============================================================
 
 @app.get("/catalog")
 async def get_catalog(request: Request):
-    try:
-        role = request.state.user["role"]
+    role = request.state.user["role"]
 
-        df = load_excel_smart()
+    df = load_excel_smart()
 
-        marcas = sorted(set(df["Marca"].astype(str)))
-        rubros = sorted(set(df["Rubro"].astype(str)))
+    resumen = {
+        "archivo": last_file_name or "No informado",
+        "fecha": "Automático",
+        "marcas": df["Marca"].nunique(),
+        "rubros": df["Rubro"].nunique(),
+        "articulos": len(df),
+        "stock_total": int(df["Cantidad"].sum()),
+        "stock_negativo": int((df["Cantidad"] < 0).sum()),
+    }
 
-        resumen = {
-            "archivo": last_file_name or "No informado",
-            "fecha": "Automático",
-            "marcas": len(marcas),
-            "rubros": len(rubros),
-            "articulos": int(len(df)),
-            "stock_total": int(df["Cantidad"].sum()),
-            "stock_negativo": int((df["Cantidad"] < 0).sum()),
-        }
+    items = []
+    for _, row in df.iterrows():
+        val = float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0
+        if role != "admin":
+            val = 0.0
 
-        items = []
-        for _, row in df.iterrows():
-            try:
-                valorizado = float(row["Valorizado LISTA1"]) if pd.notna(row["Valorizado LISTA1"]) else 0.0
-                if role != "admin":
-                    valorizado = 0.0
+        items.append({
+            "marca": str(row["Marca"]),
+            "rubro": str(row["Rubro"]),
+            "codigo": str(row["Artículo"]),
+            "descripcion": str(row["Descripción"]),
+            "color": str(row["Color"]),
+            "talle": str(row["Talle"]),
+            "stock": int(row["Cantidad"]),
+            "precio": float(row["LISTA1"]),
+            "valorizado": val,
+        })
 
-                items.append(
-                    {
-                        "marca": str(row["Marca"]),
-                        "rubro": str(row["Rubro"]),
-                        "codigo": str(row["Artículo"]),
-                        "descripcion": str(row["Descripción"]),
-                        "color": str(row["Color"]),
-                        "talle": str(row["Talle"]),
-                        "stock": int(row["Cantidad"]),
-                        "precio": float(row["LISTA1"]) if pd.notna(row["LISTA1"]) else 0.0,
-                        "valorizado": valorizado,
-                    }
-                )
-            except Exception as e:
-                print(">>> WARNING: fila inválida en /catalog:", repr(e))
+    return {"items": items, "resumen": resumen}
 
-        return {"items": items, "resumen": resumen}
-
-    except Exception as e:
-        print(">>> ERROR en /catalog:", repr(e))
-        raise HTTPException(status_code=500, detail="Error al cargar catálogo")
 # ============================================================
-# ENDPOINT: QUERY PRINCIPAL
+# ENDPOINT: QUERY
 # ============================================================
 
 @app.post("/query", response_model=QueryResponse)
 async def query_stock(request: Request):
-    try:
-        role = request.state.user["role"]
+    role = request.state.user["role"]
+    raw = await request.json()
 
-        raw = await request.json()
-        print("=== RAW REQUEST RECIBIDO ===")
-        print(raw)
-        print("================================")
+    filtros = {
+        "question": raw.get("question"),
+        "marca": raw.get("marca"),
+        "rubro": raw.get("rubro"),
+        "talleDesde": raw.get("talleDesde"),
+        "talleHasta": raw.get("talleHasta"),
+    }
 
-        filtros = {
-            "question": (raw.get("question") or "").strip(),
-            "solo_stock": bool(raw.get("solo_stock")),
-            "filtros_globales": bool(raw.get("filtros_globales")),
-            "marca": raw.get("marca") or None,
-            "rubro": raw.get("rubro") or None,
-            "talleDesde": None,
-            "talleHasta": None,
-            "soloUltimo": bool(raw.get("soloUltimo")),
-            "soloNegativo": bool(raw.get("soloNegativo")),
-        }
+    df = load_excel_smart()
+    items = procesar(df, filtros)
 
-        try:
-            v = raw.get("talleDesde")
-            filtros["talleDesde"] = None if v in ("", None) else int(v)
-        except:
-            filtros["talleDesde"] = None
+    if role != "admin":
+        for item in items:
+            item.valorizado = 0.0
 
-        try:
-            v = raw.get("talleHasta")
-            filtros["talleHasta"] = None if v in ("", None) else int(v)
-        except:
-            filtros["talleHasta"] = None
-
-        df = load_excel_smart()
-        items = procesar(df, filtros)
-
-        # Ocultar valorizado a vendedores
-        if role != "admin":
-            for item in items:
-                item.valorizado = 0.0
-
-        return QueryResponse(items=items)
-
-    except Exception as e:
-        print(">>> ERROR en /query:", repr(e))
-        raise HTTPException(status_code=500, detail="Error al procesar la consulta")
+    return QueryResponse(items=items)
