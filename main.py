@@ -30,7 +30,6 @@ app.add_middleware(
     max_age=3600,
 )
 
-
 # ============================================================
 # MIDDLEWARE JWT
 # ============================================================
@@ -56,7 +55,6 @@ async def verificar_token(request: Request, call_next):
 
     return await call_next(request)
 
-
 # ============================================================
 # ROOT / HEALTHCHECK
 # ============================================================
@@ -74,7 +72,6 @@ async def root_head():
 @app.get("/ping")
 async def ping():
     return {"status": "ok"}
-
 
 # ============================================================
 # MODELOS DE SALIDA
@@ -99,7 +96,6 @@ class ItemResponse(BaseModel):
 class QueryResponse(BaseModel):
     items: List[ItemResponse]
 
-
 # ============================================================
 # CACHE GLOBAL
 # ============================================================
@@ -107,7 +103,6 @@ class QueryResponse(BaseModel):
 df_global: Optional[pd.DataFrame] = None
 last_file_id: Optional[str] = None
 last_file_name: Optional[str] = None
-
 
 # ============================================================
 # CARGA INTELIGENTE DESDE GOOGLE DRIVE
@@ -182,7 +177,6 @@ def load_excel_smart() -> pd.DataFrame:
             return df_global
         raise
 
-
 # ============================================================
 # CARGA DE USUARIOS DESDE GOOGLE DRIVE
 # ============================================================
@@ -209,7 +203,6 @@ def cargar_usuarios() -> list:
     except Exception as e:
         print(">>> ERROR al cargar usuarios.json:", repr(e))
         raise RuntimeError("No se pudo cargar usuarios.json desde Drive")
-
 
 # ============================================================
 # LOGIN
@@ -239,7 +232,6 @@ async def login(request: Request):
     except Exception as e:
         print(">>> ERROR en /login:", repr(e))
         raise HTTPException(status_code=500, detail="Error en login")
-
 
 # ============================================================
 # FILTROS GLOBALES
@@ -272,8 +264,6 @@ def aplicar_filtros_globales(df: pd.DataFrame, filtros: dict) -> pd.DataFrame:
             df2 = df2[df2["__talle_num"] <= talle_hasta]
 
     return df2
-
-
 # ============================================================
 # PROCESAMIENTO PRINCIPAL
 # ============================================================
@@ -328,21 +318,31 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
     items: List[ItemResponse] = []
 
     for (codigo, descripcion), grupo in df2.groupby(["Artículo", "Descripción"]):
-        total_stock = int(grupo["Cantidad"].sum())
+        # Cantidades y precios numéricos, robustos
+        cantidades = pd.to_numeric(grupo["Cantidad"], errors="coerce").fillna(0).astype(int)
+        precios = pd.to_numeric(grupo["LISTA1"], errors="coerce").fillna(0).astype(float)
 
-        if solo_ultimo and total_stock != 1:
+        stock_total = int(cantidades.sum())
+
+        if solo_ultimo and stock_total != 1:
             continue
 
-        if solo_negativo and total_stock >= 0:
+        if solo_negativo and stock_total >= 0:
             continue
 
         talles = [
-            TalleItem(talle=str(row["Talle"]), stock=int(row["Cantidad"]))
-            for _, row in grupo.iterrows()
+            TalleItem(
+                talle=str(talle),
+                stock=int(stock),
+            )
+            for talle, stock in zip(grupo["Talle"], cantidades)
         ]
 
-        precio = float(grupo["LISTA1"].max() or 0)
-        valorizado = float(grupo["Valorizado LISTA1"].sum() or 0)
+        # Valorizado REAL: suma(Cantidad * LISTA1) por artículo
+        valorizado = float((cantidades * precios).sum())
+
+        # Precio de referencia: si todos los talles tienen el mismo precio, usamos ese; si no, 0
+        precio_ref = float(precios.iloc[0]) if len(set(precios.tolist())) == 1 else 0.0
 
         items.append(
             ItemResponse(
@@ -351,14 +351,13 @@ def procesar(df: pd.DataFrame, filtros: dict) -> List[ItemResponse]:
                 marca=str(grupo["Marca"].iloc[0]),
                 rubro=str(grupo["Rubro"].iloc[0]),
                 color=str(grupo["Color"].iloc[0]),
-                precio=precio,
+                precio=precio_ref,
                 valorizado=valorizado,
                 talles=talles,
             )
         )
 
     return items
-
 
 # ============================================================
 # ENDPOINT: CATALOGO
@@ -412,8 +411,6 @@ async def get_catalog(request: Request):
     except Exception as e:
         print(">>> ERROR en /catalog:", repr(e))
         raise HTTPException(status_code=500, detail="Error al cargar catálogo")
-
-
 # ============================================================
 # ENDPOINT: QUERY PRINCIPAL
 # ============================================================
@@ -465,6 +462,3 @@ async def query_stock(request: Request):
     except Exception as e:
         print(">>> ERROR en /query:", repr(e))
         raise HTTPException(status_code=500, detail="Error al procesar la consulta")
-
-
-
